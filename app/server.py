@@ -48,7 +48,7 @@ def predict():
         result["result"] = result["result"][: len(result["vocabulary"])]
         result.pop("image")
         result["shape"] = result["result"].shape
-        print("result", result)
+        # print("result", result)
 
         # convert tensors to base64
         for k, v in result.items():
