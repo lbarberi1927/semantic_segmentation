@@ -93,7 +93,7 @@ class Predictor(object):
         self,
         image_data_or_path: Union[Image.Image, str],
         vocabulary: List[str] = [],
-        augment_vocabulary: Union[str,bool] = True,
+        augment_vocabulary: Union[str, bool] = True,
         output_file: str = None,
     ) -> Union[dict, None]:
         """
@@ -115,10 +115,9 @@ class Predictor(object):
         vocabulary = list(set([v.lower().strip() for v in vocabulary]))
         # remove invalid vocabulary
         vocabulary = [v for v in vocabulary if v != ""]
-        print("vocabulary:", vocabulary)
         ori_vocabulary = vocabulary
 
-        if isinstance(augment_vocabulary,str):
+        if isinstance(augment_vocabulary, str):
             vocabulary = self.augment_vocabulary(vocabulary, augment_vocabulary)
         else:
             vocabulary = self._merge_vocabulary(vocabulary)
@@ -135,11 +134,13 @@ class Predictor(object):
                     }
                 ]
             )[0]["sem_seg"]
+
         seg_map = self._postprocess(result, ori_vocabulary)
         if output_file:
             self.visualize(image_data, seg_map, ori_vocabulary, output_file)
             return
         return {
+            "result": result,
             "image": image_data,
             "sem_seg": seg_map,
             "vocabulary": ori_vocabulary,
@@ -279,9 +280,24 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     predictor = Predictor(config_file=args.config_file, model_path=args.model_path)
-    predictor.predict(
+    result = predictor.predict(
         args.img_path,
         args.vocab.split(","),
         args.aug_vocab,
         output_file=args.output_file,
     )
+    print("result", result)
+
+    result_tensor = result["result"]
+    vacabulary = result["vocabulary"]
+    print("result_tensor", result_tensor.shape)
+    # print("seg_map", seg_map)
+    # print(result[0])
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    for i, vocab in enumerate(vacabulary):
+        plt.figure(figsize=(10, 10))
+        sns.heatmap(result_tensor[i].cpu().numpy())
+        plt.savefig(f"{vocab}_heatmap.png")
+        plt.close()

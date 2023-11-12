@@ -1,7 +1,7 @@
 cython
 scipy
 shapely
-timm
+timm==0.9.10
 h5py
 submitit
 scikit-image
