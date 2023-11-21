@@ -1,3 +1,4 @@
+#! /usr/bin/python3
 from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 import os
@@ -31,6 +32,8 @@ def predict():
         return "No image part", 400
     image = request.files["image"]
     vocab = request.form.get("vocab", "")  # Default to empty string if not provided
+    return_all_categories = request.form.get("return_all_categories", "False") == "True"
+    print("return_all_categories", return_all_categories)
 
     if image.filename == "":
         return "No selected file", 400
@@ -44,8 +47,9 @@ def predict():
         start_time = time.time()
         result = predictor.predict(image_path, vocab.split(","), False)
         print("prediction time: ", time.time() - start_time)
-        # Only return the given vocabulary.
-        result["result"] = result["result"][: len(result["vocabulary"])]
+        if not return_all_categories:
+            result["vocabulary"] = result["vocabulary"][:len(vocab.split(","))]
+            result["result"] = result["result"][: len(result["vocabulary"])]
         result.pop("image")
         result["shape"] = result["result"].shape
         # print("result", result)

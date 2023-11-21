@@ -75,9 +75,12 @@ class Predictor(object):
             config_file (str): the config file path
             model_path (str): the model path
         """
+        print("Loading config from: ", config_file)
         cfg = setup(config_file)
+        print("Building model")
         self.model = DefaultTrainer.build_model(cfg)
         if model_path.startswith("huggingface:"):
+            print("Downloading model from huggingface hub")
             model_path = download_model(model_path)
         print("Loading model from: ", model_path)
         DetectionCheckpointer(self.model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
@@ -85,6 +88,9 @@ class Predictor(object):
         )
         print("Loaded model from: ", model_path)
         self.model.eval()
+        print("Start compiling model")
+        # self.model = torch.compile(self.model)
+        print("Compiled model")
         if torch.cuda.is_available():
             self.device = torch.device("cuda")
             self.model = self.model.cuda()
@@ -143,7 +149,7 @@ class Predictor(object):
             "result": result,
             "image": image_data,
             "sem_seg": seg_map,
-            "vocabulary": ori_vocabulary,
+            "vocabulary": vocabulary,
         }
 
     def visualize(
