@@ -125,8 +125,9 @@ class Predictor(object):
 
         if isinstance(augment_vocabulary, str):
             vocabulary = self.augment_vocabulary(vocabulary, augment_vocabulary)
-        else:
+        elif isinstance(augment_vocabulary, bool) and augment_vocabulary:
             vocabulary = self._merge_vocabulary(vocabulary)
+
         if len(ori_vocabulary) == 0:
             ori_vocabulary = vocabulary
         with torch.no_grad():

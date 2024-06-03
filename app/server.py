@@ -1,4 +1,4 @@
-#! /usr/bin/python3
+#!/usr/bin/env python3
 from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 import os
@@ -18,12 +18,11 @@ config_file = os.path.join(
     os.path.dirname(os.path.realpath(__file__)),
     "../configs/san_clip_vit_large_res4_coco.yaml",
 )
-model_path = os.path.join(
-    os.path.dirname(os.path.realpath(__file__)), "../resources/san_vit_large_14.pth"
-)
+model_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "../resources/san_vit_large_14.pth")
 predictor = Predictor(config_file=config_file, model_path=model_path)
 
 log_dir = "/san_logs"
+os.makedirs(log_dir, exist_ok=True)
 
 
 @app.route("/predict", methods=["POST"])
@@ -48,7 +47,7 @@ def predict():
         result = predictor.predict(image_path, vocab.split(","), False)
         print("prediction time: ", time.time() - start_time)
         if not return_all_categories:
-            result["vocabulary"] = result["vocabulary"][:len(vocab.split(","))]
+            result["vocabulary"] = result["vocabulary"][: len(vocab.split(","))]
             result["result"] = result["result"][: len(result["vocabulary"])]
         result.pop("image")
         result["shape"] = result["result"].shape
