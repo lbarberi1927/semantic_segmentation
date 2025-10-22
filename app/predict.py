@@ -142,7 +142,10 @@ class Predictor(object):
                 ]
             )[0]["sem_seg"]
 
+        print("result", result)
+        print("result shape", result.shape)
         seg_map = self._postprocess(result, ori_vocabulary)
+        print("seg_map shape", seg_map.shape)
         if output_file:
             self.visualize(image_data, seg_map, ori_vocabulary, output_file)
             return

@@ -10,16 +10,18 @@ import io
 import base64
 
 # Assuming Predictor is a class from your script
-from predict import Predictor
+from DINO_predict import Predictor
 
 app = Flask(__name__)
-
+"""
 config_file = os.path.join(
     os.path.dirname(os.path.realpath(__file__)),
     "../configs/san_clip_vit_large_res4_coco.yaml",
 )
 model_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "../resources/san_vit_large_14.pth")
 predictor = Predictor(config_file=config_file, model_path=model_path)
+"""
+predictor = Predictor()
 
 log_dir = "/san_logs"
 os.makedirs(log_dir, exist_ok=True)
@@ -51,13 +53,15 @@ def predict():
             result["result"] = result["result"][: len(result["vocabulary"])]
         result.pop("image")
         result["shape"] = result["result"].shape
-        # print("result", result)
+        print("result", result)
 
         # convert tensors to base64
         for k, v in result.items():
             print("k", k, "v", type(v))
             if isinstance(v, torch.Tensor):
-                result[k] = base64.b64encode(v.cpu().numpy()).decode("utf-8")
+                arr = v.cpu().numpy()
+                arr = np.ascontiguousarray(arr)
+                result[k] = base64.b64encode(arr).decode("utf-8")
             if isinstance(v, np.ndarray):
                 result[k] = base64.b64encode(v).decode("utf-8")
 
