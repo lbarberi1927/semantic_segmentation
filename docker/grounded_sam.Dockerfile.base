@@ -1,0 +1,20 @@
+FROM nvcr.io/nvidia/pytorch:22.04-py3
+LABEL image=sam-base
+
+WORKDIR /app/SAN
+COPY ./Grounded-Segment-Anything ./Grounded-Segment-Anything
+
+WORKDIR /app/SAN/Grounded-Segment-Anything
+RUN export AM_I_DOCKER=False && export BUILD_WITH_CUDA=True && export CUDA_HOME=/usr/local/cuda/
+RUN python -m pip install -e segment_anything
+RUN python -m pip install --no-build-isolation -e GroundingDINO
+RUN pip install --upgrade diffusers[torch]
+RUN git submodule update --init --recursive
+RUN cd grounded-sam-osx && bash install.sh
+RUN git clone https://github.com/xinyu1205/recognize-anything.git
+RUN pip install -r ./recognize-anything/requirements.txt
+RUN pip install -e ./recognize-anything/
+RUN pip install opencv-python-headless==4.5.3.56
+# RUN apt-get update && apt-get install ffmpeg libsm6 libxext6  -y
+
+WORKDIR /app/SAN

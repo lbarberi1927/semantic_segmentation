@@ -10,7 +10,7 @@ import io
 import base64
 
 # Assuming Predictor is a class from your script
-from DINO_predict import Predictor
+from SAM_predict import Predictor
 
 app = Flask(__name__)
 """
@@ -46,7 +46,7 @@ def predict():
 
         # Process with your existing script
         start_time = time.time()
-        result = predictor.predict(image_path, vocab.split(","), False)
+        result = predictor.predict(image_path, vocab.split(","))
         print("prediction time: ", time.time() - start_time)
         if not return_all_categories:
             result["vocabulary"] = result["vocabulary"][: len(vocab.split(","))]
