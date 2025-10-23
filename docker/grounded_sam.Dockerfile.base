@@ -5,9 +5,15 @@ WORKDIR /app/SAN
 COPY ./Grounded-Segment-Anything ./Grounded-Segment-Anything
 
 WORKDIR /app/SAN/Grounded-Segment-Anything
-RUN export AM_I_DOCKER=False && export BUILD_WITH_CUDA=True && export CUDA_HOME=/usr/local/cuda/
+RUN export AM_I_DOCKER=True && export BUILD_WITH_CUDA=True
+ENV CUDA_HOME="/usr/local/cuda"
+ENV PATH="/usr/local/cuda/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
+
+RUN /bin/bash -c 'echo "Checking nvcc path..." && which nvcc && nvcc --version'
+
 RUN python -m pip install -e segment_anything
-RUN python -m pip install --no-build-isolation -e GroundingDINO
+#RUN python -m pip install --no-build-isolation -e GroundingDINO
 RUN pip install --upgrade diffusers[torch]
 RUN git submodule update --init --recursive
 RUN cd grounded-sam-osx && bash install.sh

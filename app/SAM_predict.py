@@ -48,6 +48,7 @@ class Predictor(object):
         """
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print("Using device:", self.device, flush=True)
+        print("torch cuda version:", torch.version.cuda, flush=True)
         # Building GroundingDINO inference model
         self.grounding_dino_model = Model(model_config_path=GROUNDING_DINO_CONFIG_PATH,
                                      model_checkpoint_path=GROUNDING_DINO_CHECKPOINT_PATH)
