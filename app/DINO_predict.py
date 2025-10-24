@@ -1,3 +1,4 @@
+import math
 from typing import List, Union
 
 import numpy as np
@@ -12,6 +13,8 @@ try:
 except:
     pass
 import os
+import torchvision.transforms as TVT
+
 
 import torch
 import torch.nn.functional as F
@@ -20,7 +23,11 @@ from PIL import Image
 
 
 class Predictor(object):
-    def __init__(self, backbone_path: str = "SAN/dinov3/dinov3/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth", weight_path: str = "SAN/dinov3/dinov3/dinov3_vitl16_dinotxt_vision_head_and_text_encoder-a442d8f5.pth"):
+    def __init__(
+            self,
+            backbone_path: str = "SAN/dinov3/dinov3/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth",
+            weight_path: str = "SAN/dinov3/dinov3/dinov3_vitl16_dinotxt_vision_head_and_text_encoder-a442d8f5.pth",
+    ):
         """
         Args:
             config_file (str): the config file path
@@ -57,51 +64,72 @@ class Predictor(object):
             image_data = Image.open(image_data_or_path)
         else:
             image_data = image_data_or_path
-
         w, h = image_data.size
-        print("Original image size:", w, h, flush=True)
-        image_tensor: torch.Tensor = self._preprocess(image_data).unsqueeze(0)
+        image_tensor: torch.Tensor = self._preprocess(image_data)
         print("image tensor shape:", image_tensor.shape, flush=True)
+
         vocabulary = list(set([v.lower().strip() for v in vocabulary]))
         # remove invalid vocabulary
         vocabulary = [v for v in vocabulary if v != ""]
         ori_vocabulary = vocabulary
 
         with torch.no_grad():
-            # Move image to device and extract features
             image_tensor = image_tensor.to(self.device)
 
-            # Encode text tokens for each vocabulary item
-            tokenized_vocab = self.tokenizer.tokenize(vocabulary).cuda()
-            if self.device.type == "cuda":
-                tokenized_vocab = tokenized_vocab.cuda()
-            _, text_features, _, patch_tokens, _ = self.model(
-                image_tensor, tokenized_vocab
-            )
-            text_features = text_features[:, 1024:]
+            _, blocks_feats = self.encode_image(image_tensor.unsqueeze(0))  # [1, h, w, D]
 
-            print("patch shape:", patch_tokens.shape, flush=True)
-            print("text_features shape:", text_features.shape, flush=True)
+            tokens = self.tokenizer.tokenize(vocabulary).to("cuda", non_blocking=True)
+            text_feats = self.model.encode_text(tokens)  # [num_prompts, 2D]
+            text_feats = text_feats[:, text_feats.shape[1] // 2:]  # The 1st half of the features corresponds to the CLS token, drop it
+            print("text_features shape:", text_feats.shape, flush=True)
+            text_feats = F.normalize(text_feats, p=2, dim=-1)  # Normalize each text embedding
 
-            B, P, D = patch_tokens.shape  # number of patches
-            H, W = 40, 59#int(P ** 0.5)
-            x = patch_tokens.movedim(2, 1).unflatten(2, (H, W)).float() # [C, H, W]
-            print("x shape after reshape:", x.shape, flush=True)
-            x = F.interpolate(x, size=(427, 640), mode="bicubic", align_corners=False)
-            print("x shape after interpolate:", x.shape, flush=True)
-            x = F.normalize(x, p=2, dim=1)
-            y = F.normalize(text_features.float(), p=2, dim=1)
-            result = torch.einsum("bdhw,cd->bchw", x, y).squeeze(0)
-            print("result shape:", result.shape, flush=True)
-        seg_map = self._postprocess(result, ori_vocabulary)
+            _, H, W = image_tensor.shape
+            _, h, w, _ = blocks_feats.shape
+            blocks_feats = blocks_feats.squeeze(0)  # [h, w, D]
+            print("H, W, h, w:", H, W, h, w, flush=True)
+
+            # Cosine similarity between patch features and text features (already normalized)
+            blocks_feats = F.normalize(blocks_feats, p=2, dim=-1)  # [h, w, D]
+            cos = torch.einsum("cd,hwd->chw", text_feats, blocks_feats)  # [num_classes, h, w]
+            print("cosine shape:", cos.shape, flush=True)
+            print("cosine:", cos, flush=True)
+
+        seg_map = self._postprocess(cos, ori_vocabulary, H, W)
         print("seg_map shape:", seg_map.shape)
 
         return {
-            "result": result,
+            "result": cos,
             "image": image_data,
             "sem_seg": seg_map,
             "vocabulary": vocabulary,
         }
+
+    def encode_image(self, image_tensor: torch.Tensor) -> Union[torch.Tensor, torch.Tensor]:
+        B, _, H, W = image_tensor.shape
+        P = self.model.visual_model.backbone.patch_size
+        new_H = math.ceil(H / P) * P
+        new_W = math.ceil(W / P) * P
+
+        # Stretch image to a multiple of patch size
+        if (H, W) != (new_H, new_W):
+            image_tensor = F.interpolate(image_tensor, size=(new_H, new_W), mode="bicubic",
+                                         align_corners=False)  # [B, 3, H', W']
+
+        print("Stretched image shape:", image_tensor.shape, flush=True)
+        print("patch size:", P, flush=True)
+
+        B, _, h_i, w_i = image_tensor.shape
+
+        backbone_patches = None
+        _, _, patch_tokens = self.model.visual_model.get_class_and_patch_tokens(image_tensor)
+        print("patch tokens shape:", patch_tokens.shape, flush=True)
+        blocks_patches = (
+            patch_tokens.reshape(B, h_i // P, w_i // P, -1).contiguous()
+        )  # [1, h, w, D]
+        print("blocks patches shape:", blocks_patches.shape, flush=True)
+
+        return backbone_patches, blocks_patches
 
     def _preprocess(self, image: Image.Image) -> torch.Tensor:
         """
@@ -112,18 +140,12 @@ class Predictor(object):
             torch.Tensor: the preprocessed image
         """
         image = image.convert("RGB")
-        # resize short side to 640
-        w, h = image.size
-        if w < h:
-            image = image.resize((640, int(h * 640 / w)))
-        else:
-            image = image.resize((int(w * 640 / h), 640))
         image = torch.from_numpy(np.asarray(image)).float()
         image = image.permute(2, 0, 1)
         return image
 
     def _postprocess(
-            self, result: torch.Tensor, ori_vocabulary: List[str]
+            self, result: torch.Tensor, ori_vocabulary: List[str], H, W
     ) -> np.ndarray:
         """
         Postprocess the segmentation result.
@@ -133,13 +155,13 @@ class Predictor(object):
         Returns:
             np.ndarray: the postprocessed segmentation result
         """
+        result = F.interpolate(result.unsqueeze(0), size=(H, W), mode="bilinear", align_corners=False)
         result = result.argmax(dim=0).cpu().numpy()  # (H, W)
         print("segmap result", result, flush=True)
         print("segmap result shape", result.shape, flush=True)
         if len(ori_vocabulary) == 0:
             return result
         result[result >= len(ori_vocabulary)] = len(ori_vocabulary)
-        print("segmap after adjust", result, flush=True)
         return result
 
 

@@ -1,2 +1,0 @@
-FROM lbarberi/san-base:sam
-COPY ./app/ /app/SAN/app/

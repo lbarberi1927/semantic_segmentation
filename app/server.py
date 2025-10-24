@@ -10,7 +10,7 @@ import io
 import base64
 
 # Assuming Predictor is a class from your script
-from SAM_predict import Predictor
+from DINO_predict import Predictor
 
 app = Flask(__name__)
 """
@@ -53,7 +53,7 @@ def predict():
             result["result"] = result["result"][: len(result["vocabulary"])]
         result.pop("image")
         result["shape"] = result["result"].shape
-        print("result", result)
+        #print("result", result)
 
         # convert tensors to base64
         for k, v in result.items():

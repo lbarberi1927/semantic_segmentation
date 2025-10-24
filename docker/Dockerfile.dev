@@ -1,0 +1,3 @@
+FROM lbarberi/dino:base
+COPY ./app/ /app/SAN/app/
+WORKDIR /app/
