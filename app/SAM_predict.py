@@ -1,3 +1,4 @@
+import gc
 import time
 from typing import List, Union
 
@@ -30,7 +31,7 @@ GROUNDING_DINO_CONFIG_PATH = "Grounded-Segment-Anything/GroundingDINO/groundingd
 GROUNDING_DINO_CHECKPOINT_PATH = "Grounded-Segment-Anything/groundingdino_swint_ogc.pth"
 
 # Segment-Anything checkpoint
-SAM_ENCODER_VERSION = "vit_h"
+SAM_ENCODER_VERSION = "vit_h"  # choose from "vit_h", "vit_l", "vit_b"
 SAM_CHECKPOINT_PATH = "Grounded-Segment-Anything/sam_vit_h_4b8939.pth"
 
 BOX_THRESHOLD = 0.25
@@ -48,15 +49,15 @@ class Predictor(object):
         """
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print("Using device:", self.device, flush=True)
-        print("torch cuda version:", torch.version.cuda, flush=True)
         # Building GroundingDINO inference model
-        self.grounding_dino_model = Model(model_config_path=GROUNDING_DINO_CONFIG_PATH,
-                                     model_checkpoint_path=GROUNDING_DINO_CHECKPOINT_PATH)
+        self.grounding_dino_model = Model(
+            model_config_path=GROUNDING_DINO_CONFIG_PATH,
+            model_checkpoint_path=GROUNDING_DINO_CHECKPOINT_PATH,
+            device=self.device,
+        )
 
         # Building SAM Model and SAM Predictor
-        sam = sam_model_registry[SAM_ENCODER_VERSION](checkpoint=SAM_CHECKPOINT_PATH)
-        sam.to(device=self.device)
-        self.sam_predictor = SamPredictor(sam)
+        self.sam_model = sam_model_registry[SAM_ENCODER_VERSION](checkpoint=SAM_CHECKPOINT_PATH)
 
 
     def predict(
@@ -74,25 +75,18 @@ class Predictor(object):
         """
         image_data = cv2.imread(image_data_or_path)
 
-        print("Original image:", image_data.shape, flush=True)
-        #image_tensor: torch.Tensor = self._preprocess(image_data).unsqueeze(0)
-        #print("image tensor shape:", image_tensor.shape, flush=True)
         vocabulary = list(set([v.lower().strip() for v in vocabulary]))
         # remove invalid vocabulary
         vocabulary = [v for v in vocabulary if v != ""]
-        ori_vocabulary = vocabulary
+
+        #image_data = self.resize_image(image_data, max_size=1024)
 
         with torch.no_grad():
-            # Move image to device and extract features
-            #image_tensor = image_tensor.to(self.device)
 
             # Step 1: Object Detection using GroundingDINO
             detections = self.object_detection(image_data, vocabulary)
-            print("Detections:", detections, flush=True)
 
             # NMS post process
-            print(f"Before NMS: {len(detections.xyxy)} boxes")
-            nms_time = time.time()
             nms_idx = torchvision.ops.nms(
                 torch.from_numpy(detections.xyxy),
                 torch.from_numpy(detections.confidence),
@@ -102,7 +96,11 @@ class Predictor(object):
             detections.xyxy = detections.xyxy[nms_idx]
             detections.confidence = detections.confidence[nms_idx]
             detections.class_id = detections.class_id[nms_idx]
-            print(f"After NMS: {len(detections.xyxy)} boxes, done in {time.time() - nms_time:.3f}s", flush=True)
+
+            # Force python GC and clear the CUDA cache
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
             # Step 2: Generate masks using SAM
             # convert detections to masks
@@ -112,14 +110,34 @@ class Predictor(object):
             )
 
             print("Generated masks shape:", detections.mask.shape, flush=True)
-            print("Generated masks", detections.mask, flush=True)
+
+        seg_map = self._postprocess(detections.mask, detections.class_id, len(vocabulary))
+        print("seg_map shape:", seg_map.shape, flush=True)
 
         return {
-            "result": result,
+            "result": seg_map,
             "image": image_data,
             #"sem_seg": seg_map,
             "vocabulary": vocabulary,
         }
+
+    def resize_image(self, image: np.ndarray, max_size: int = 512) -> np.ndarray:
+        """
+        resize the input image to have the maximum side length of max_size.
+        Args:
+            image (np.ndarray): the input image
+            max_size (int): the maximum side length
+        Returns:
+            np.ndarray: the resized image
+        """
+        h, w, _ = image.shape
+        scale = max_size / max(h, w)
+        if scale < 1.0:
+            new_w = int(w * scale)
+            new_h = int(h * scale)
+            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            print(f"resized image from ({w}, {h}) to ({new_w}, {new_h})", flush=True)
+        return image
 
 
     def object_detection(self, image: torch.Tensor, vocabulary: List[str]):
@@ -138,9 +156,25 @@ class Predictor(object):
             box_threshold=BOX_THRESHOLD,
             text_threshold=TEXT_THRESHOLD
         )
+        # --- Free GroundingDINO GPU activations and cache before running SAM ---
+        try:
+            # make sure any pending CUDA work finishes
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+        except Exception:
+            pass
+
+        # If GroundingDINO is a torch module, try moving it to CPU to free GPU params
+        try:
+            if hasattr(self.grounding_dino_model, "to"):
+                self.grounding_dino_model.to("cpu")
+        except Exception as e:
+            print("Warning: could not move grounding dino to cpu:", e, flush=True)
         return detections
 
     def segment(self, image: np.ndarray, xyxy: np.ndarray) -> np.ndarray:
+        # Ensure SAM is on the GPU only now (lazy move / initialize)
+        self.sam_predictor = SamPredictor(self.sam_model.to(self.device))
         self.sam_predictor.set_image(image)
         result_masks = []
         for box in xyxy:
@@ -152,29 +186,8 @@ class Predictor(object):
             result_masks.append(masks[index])
         return np.array(result_masks)
 
-
-    def _preprocess(self, image: Image.Image) -> torch.Tensor:
-        """
-        Preprocess the input image.
-        Args:
-            image (Image.Image): the input image
-        Returns:
-            torch.Tensor: the preprocessed image
-        """
-        image = image.convert("RGB")
-        # resize short side to 640
-        transform = T.Compose(
-            [
-                T.RandomResize([800], max_size=1333),
-                T.ToTensor(),
-                T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-            ]
-        )
-        image, _ = transform(image, None)  # 3, h, w
-        return image
-
     def _postprocess(
-            self, result: torch.Tensor, ori_vocabulary: List[str]
+            self, mask, classes, len_vocab
     ) -> np.ndarray:
         """
         Postprocess the segmentation result.
@@ -184,14 +197,18 @@ class Predictor(object):
         Returns:
             np.ndarray: the postprocessed segmentation result
         """
-        result = result.argmax(dim=0).cpu().numpy()  # (H, W)
-        print("segmap result", result, flush=True)
-        print("segmap result shape", result.shape, flush=True)
-        if len(ori_vocabulary) == 0:
-            return result
-        result[result >= len(ori_vocabulary)] = len(ori_vocabulary)
-        print("segmap after adjust", result, flush=True)
-        return result
+        #result = result.argmax(dim=0).cpu().numpy()  # (H, W)
+        n_boxes, h, w = mask.shape
+        out = torch.zeros((len_vocab, h, w), dtype=torch.uint8, device=self.device)
+
+        # Assign by iterating masks; later masks override earlier ones
+        for i in range(n_boxes):
+            cls_id = classes[i]
+            m = torch.from_numpy(mask[i]).to(device=self.device)  # (h, w)
+            out[cls_id, m] = 1
+
+        out = out.cpu().numpy()
+        return out
 
 
 if __name__ == "__main__":

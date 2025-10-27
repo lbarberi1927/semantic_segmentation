@@ -10,7 +10,7 @@ import io
 import base64
 
 # Assuming Predictor is a class from your script
-from DINO_predict import Predictor
+from SAM_predict import Predictor
 
 app = Flask(__name__)
 """
@@ -63,7 +63,7 @@ def predict():
                 arr = np.ascontiguousarray(arr)
                 result[k] = base64.b64encode(arr).decode("utf-8")
             if isinstance(v, np.ndarray):
-                result[k] = base64.b64encode(v).decode("utf-8")
+                result[k] = base64.b64encode(v.astype(np.float32)).decode("utf-8")
 
         # Format and return the result
         return jsonify(result)
