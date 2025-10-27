@@ -10,7 +10,7 @@ import io
 import base64
 
 # Assuming Predictor is a class from your script
-from SAM_predict import Predictor
+from SAM2_predict import Predictor
 
 app = Flask(__name__)
 """
