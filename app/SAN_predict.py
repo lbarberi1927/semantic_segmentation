@@ -37,6 +37,11 @@ model_cfg = {
         "model_path": "huggingface:san_vit_large_14.pth",
     },
 }
+config_file = os.path.join(
+    os.path.dirname(os.path.realpath(__file__)),
+    "../configs/san_clip_vit_large_res4_coco.yaml",
+)
+model_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "../resources/san_vit_large_14.pth")
 
 
 def download_model(model_path: str):
@@ -68,8 +73,12 @@ def setup(config_file: str, device=None):
     return cfg
 
 
-class Predictor(object):
-    def __init__(self, config_file: str, model_path: str):
+class SAN_Predictor(object):
+    def __init__(
+            self,
+            config_file: str = config_file,
+            model_path: str = model_path,
+    ):
         """
         Args:
             config_file (str): the config file path

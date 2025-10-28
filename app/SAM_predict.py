@@ -27,18 +27,19 @@ import torch.nn.functional as F
 from PIL import Image
 
 # GroundingDINO config and checkpoint
-GROUNDING_DINO_CONFIG_PATH = "Grounded-Segment-Anything/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
-GROUNDING_DINO_CHECKPOINT_PATH = "Grounded-Segment-Anything/groundingdino_swint_ogc.pth"
+GROUNDING_DINO_CONFIG_PATH = "/app/SAN/Grounded-Segment-Anything/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
+GROUNDING_DINO_CHECKPOINT_PATH = "/app/SAN/Grounded-Segment-Anything/groundingdino_swint_ogc.pth"
 
 # Segment-Anything checkpoint
 SAM_ENCODER_VERSION = "vit_h"  # choose from "vit_h", "vit_l", "vit_b"
-SAM_CHECKPOINT_PATH = "Grounded-Segment-Anything/sam_vit_h_4b8939.pth"
+SAM_CHECKPOINT_PATH = "/app/SAN/Grounded-Segment-Anything/sam_vit_h_4b8939.pth"
 
 BOX_THRESHOLD = 0.25
 TEXT_THRESHOLD = 0.25
 NMS_THRESHOLD = 0.8
+RETURN_LOGITS = True
 
-class Predictor(object):
+class SAM_Predictor(object):
     def __init__(
             self,
     ):
@@ -56,7 +57,7 @@ class Predictor(object):
             device=self.device,
         )
 
-        # Building SAM Model and SAM Predictor
+        # Building SAM Model and SAM SAM2_Predictor
         self.sam_model = sam_model_registry[SAM_ENCODER_VERSION](checkpoint=SAM_CHECKPOINT_PATH)
 
 
@@ -104,7 +105,7 @@ class Predictor(object):
 
             # Step 2: Generate masks using SAM
             # convert detections to masks
-            detections.mask = self.segment(
+            detections.mask, logits = self.segment(
                 image=cv2.cvtColor(image_data, cv2.COLOR_BGR2RGB),
                 xyxy=detections.xyxy
             )
@@ -113,11 +114,16 @@ class Predictor(object):
 
         seg_map = self._postprocess(detections.mask, detections.class_id, len(vocabulary))
         print("seg_map shape:", seg_map.shape, flush=True)
+        print("logits shape:", logits.shape, flush=True)
+
+        if RETURN_LOGITS:
+            result = logits
+        else:
+            result = seg_map
 
         return {
-            "result": seg_map,
+            "result": result,
             "image": image_data,
-            #"sem_seg": seg_map,
             "vocabulary": vocabulary,
         }
 
@@ -177,6 +183,7 @@ class Predictor(object):
         self.sam_predictor = SamPredictor(self.sam_model.to(self.device))
         self.sam_predictor.set_image(image)
         result_masks = []
+        result_logits = []
         for box in xyxy:
             masks, scores, logits = self.sam_predictor.predict(
                 box=box,
@@ -184,7 +191,8 @@ class Predictor(object):
             )
             index = np.argmax(scores)
             result_masks.append(masks[index])
-        return np.array(result_masks)
+            result_logits.append(logits[index])
+        return np.array(result_masks), np.array(result_logits)
 
     def _postprocess(
             self, mask, classes, len_vocab

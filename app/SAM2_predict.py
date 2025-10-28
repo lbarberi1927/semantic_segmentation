@@ -30,9 +30,10 @@ torch.autocast(device_type="cuda", dtype=torch.bfloat16).__enter__()
 FLORENCE2_MODEL_ID = "microsoft/Florence-2-large"
 SAM2_CHECKPOINT = "SAN/Grounded-SAM-2/checkpoints/sam2.1_hiera_large.pt"
 SAM2_CONFIG = "configs/sam2.1/sam2.1_hiera_l.yaml"
+RETURN_LOGITS = True
 
 
-class Predictor(object):
+class SAM2_Predictor(object):
     def __init__(
             self,
     ):
@@ -79,7 +80,6 @@ class Predictor(object):
             # Step 1: Object Detection using Florence2
             detections = self.object_detection(image_data, vocabulary)["<OPEN_VOCABULARY_DETECTION>"]
             classes = detections["bboxes_labels"]
-            print("detections", detections, flush=True)
 
             # Force python GC and clear the CUDA cache
             gc.collect()
@@ -88,19 +88,19 @@ class Predictor(object):
 
             # Step 2: Generate masks using SAM2
             # convert detections to masks
-            masks = self.segment(
+            masks, logits = self.segment(
                 image=np.array(image_data),
                 boxes=detections["bboxes"]
             )
 
-        print("vocabulary:", vocabulary, flush=True)
-        seg_map = self._postprocess(masks, classes, vocabulary)
-        print("seg_map shape:", seg_map.shape, flush=True)
+        if RETURN_LOGITS:
+            result = logits
+        else:
+            result = self._postprocess(masks, classes, vocabulary)
 
         return {
-            "result": masks,
+            "result": result,
             "image": image_data,
-            #"sem_seg": seg_map,
             "vocabulary": vocabulary,
         }
 
@@ -140,8 +140,6 @@ class Predictor(object):
         for k, v in inputs.items():
             inputs[k] = v.to(self.device)
 
-        print("devices:", {k: v.device for k, v in inputs.items()}, flush=True)
-        print("model device:", self.florence2_model.device, flush=True)
         with torch.autocast(self.device.type):
             generated_ids = self.florence2_model.generate(
                 input_ids=inputs["input_ids"],
@@ -166,14 +164,8 @@ class Predictor(object):
         except Exception:
             pass
 
-        # If florence2 is a torch module, try moving it to CPU to free GPU params
-        try:
-            if hasattr(self.florence2_processor, "to"):
-                self.florence2_processor.to("cpu")
-            if hasattr(self.florence2_model, "to"):
-                self.florence2_model.to("cpu")
-        except Exception as e:
-            print("Warning: could not move grounding dino to cpu:", e, flush=True)
+        self.florence2_model.to("cpu")
+
         return parsed_answer
 
     def segment(self, image: np.ndarray, boxes: np.ndarray) -> np.ndarray:
@@ -187,8 +179,9 @@ class Predictor(object):
 
         if logits.ndim == 4:
             logits = logits.squeeze(1)
-        print(logits.shape)
-        return logits
+        if masks.ndim == 4:
+            masks = masks.squeeze(1)
+        return masks, logits
 
     def _postprocess(
             self, mask, classes, vocabulary: List[str]
@@ -201,8 +194,7 @@ class Predictor(object):
         Returns:
             np.ndarray: the postprocessed segmentation result
         """
-        result = mask.argmax(axis=0)[0]#.cpu().numpy()  # (H, W)
-        """n_boxes, h, w = mask.shape
+        n_boxes, h, w = mask.shape
 
         out = torch.zeros((len(vocabulary), h, w), dtype=torch.uint8, device=self.device)
 
@@ -211,10 +203,9 @@ class Predictor(object):
             m = torch.from_numpy(mask[i]).to(device=self.device).bool()  # (h, w)
             out[cls_id, m] = 1
 
+        out = out.cpu().numpy()
 
-
-        out = out.cpu().numpy()"""
-        return result
+        return out
 
 
 if __name__ == "__main__":
@@ -241,7 +232,7 @@ if __name__ == "__main__":
         "--output-file", type=str, default=None, help="path to output file."
     )
     args = parser.parse_args()
-    predictor = Predictor(config_file=args.config_file, model_path=args.model_path)
+    predictor = SAM2_Predictor(config_file=args.config_file, model_path=args.model_path)
     result = predictor.predict(
         args.img_path,
         args.vocab.split(","),

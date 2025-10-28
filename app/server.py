@@ -9,19 +9,21 @@ import numpy as np
 import io
 import base64
 
-# Assuming Predictor is a class from your script
-from SAM2_predict import Predictor
+
+def parse_segmentation_model(model_str):
+    if model_str=="SAM2":
+        from SAM2_predict import SAM2_Predictor
+        return SAM2_Predictor()
+    elif model_str=="SAM":
+        from SAM_predict import SAM_Predictor
+        return SAM_Predictor()
+    elif model_str=="SAN":
+        from SAN_predict import SAN_Predictor
+        return SAN_Predictor()
+    else:
+        raise ValueError(f"Unknown segmentation model: {model_str}")
 
 app = Flask(__name__)
-"""
-config_file = os.path.join(
-    os.path.dirname(os.path.realpath(__file__)),
-    "../configs/san_clip_vit_large_res4_coco.yaml",
-)
-model_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "../resources/san_vit_large_14.pth")
-predictor = Predictor(config_file=config_file, model_path=model_path)
-"""
-predictor = Predictor()
 
 log_dir = "/san_logs"
 os.makedirs(log_dir, exist_ok=True)
@@ -34,7 +36,9 @@ def predict():
     image = request.files["image"]
     vocab = request.form.get("vocab", "")  # Default to empty string if not provided
     return_all_categories = request.form.get("return_all_categories", "False") == "True"
-    print("return_all_categories", return_all_categories)
+    segmentation_model = request.form.get("segmentation_model", "SAN")
+    predictor = parse_segmentation_model(segmentation_model)
+    print("Segmentation model: ", segmentation_model)
 
     if image.filename == "":
         return "No selected file", 400
