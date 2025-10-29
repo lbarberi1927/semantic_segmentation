@@ -1,3 +1,4 @@
+import gc
 from typing import List, Union
 
 import numpy as np
@@ -43,6 +44,12 @@ config_file = os.path.join(
 )
 model_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "../resources/san_vit_large_14.pth")
 
+MANUAL_MEMORY_PURGE = True  # set to False to disable manual memory purge
+# Force python GC and clear the CUDA cache
+gc.collect()
+if torch.cuda.is_available():
+    torch.cuda.synchronize()
+    torch.cuda.empty_cache()
 
 def download_model(model_path: str):
     """
@@ -139,8 +146,9 @@ class SAN_Predictor(object):
 
         if len(ori_vocabulary) == 0:
             ori_vocabulary = vocabulary
+
         with torch.no_grad():
-            result = self.model(
+            raw_result = self.model(
                 [
                     {
                         "image": image_tensor,
@@ -151,19 +159,71 @@ class SAN_Predictor(object):
                 ]
             )[0]["sem_seg"]
 
-        print("result", result)
-        print("result shape", result.shape)
-        seg_map = self._postprocess(result, ori_vocabulary)
-        print("seg_map shape", seg_map.shape)
-        if output_file:
-            self.visualize(image_data, seg_map, ori_vocabulary, output_file)
-            return
-        return {
-            "result": result,
+        # Move result to CPU immediately to free GPU memory
+        try:
+            result_cpu = raw_result.detach().cpu()
+        except Exception:
+            result_cpu = raw_result.cpu() if hasattr(raw_result, "cpu") else raw_result
+
+        seg_map = self._postprocess(result_cpu, ori_vocabulary)
+
+        # build return value using CPU tensor (not GPU tensor)
+        ret = {
+            "result": result_cpu,
             "image": image_data,
             "sem_seg": seg_map,
             "vocabulary": vocabulary,
         }
+
+        if MANUAL_MEMORY_PURGE:
+            # clean up large temporaries before returning
+            try:
+                del raw_result
+            except Exception:
+                pass
+            try:
+                del image_tensor
+            except Exception:
+                pass
+
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            self.purge_memory(unload_model=True)
+
+        if output_file:
+            self.visualize(image_data, seg_map, ori_vocabulary, output_file)
+            return
+
+        return ret
+
+    def purge_memory(self, unload_model: bool = False):
+        """
+        Free Python and CUDA memory. If unload_model is True the model object is deleted.
+        Call this after you're done with predictions or between heavy runs.
+        """
+        try:
+            if unload_model and hasattr(self, "model"):
+                try:
+                    self.model.to("cpu")
+                except Exception:
+                    pass
+                try:
+                    delattr(self, "model")
+                except Exception:
+                    # fallback if delattr fails
+                    try:
+                        del self.model
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # force Python GC and free CUDA cache
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def visualize(
         self,

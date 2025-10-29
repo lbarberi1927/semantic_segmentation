@@ -51,6 +51,7 @@ def predict():
         # Process with your existing script
         start_time = time.time()
         result = predictor.predict(image_path, vocab.split(","))
+        prediction_time = time.time() - start_time
         print("prediction time: ", time.time() - start_time)
         if not return_all_categories:
             result["vocabulary"] = result["vocabulary"][: len(vocab.split(","))]
@@ -69,6 +70,7 @@ def predict():
             if isinstance(v, np.ndarray):
                 result[k] = base64.b64encode(v.astype(np.float32)).decode("utf-8")
 
+        result["prediction_time"] = prediction_time
         # Format and return the result
         return jsonify(result)
 

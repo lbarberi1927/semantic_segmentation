@@ -31,7 +31,13 @@ FLORENCE2_MODEL_ID = "microsoft/Florence-2-large"
 SAM2_CHECKPOINT = "SAN/Grounded-SAM-2/checkpoints/sam2.1_hiera_large.pt"
 SAM2_CONFIG = "configs/sam2.1/sam2.1_hiera_l.yaml"
 RETURN_LOGITS = True
+MANUAL_MEMORY_PURGE = True
 
+# Force python GC and clear the CUDA cache
+gc.collect()
+if torch.cuda.is_available():
+    torch.cuda.synchronize()
+    torch.cuda.empty_cache()
 
 class SAM2_Predictor(object):
     def __init__(
@@ -98,11 +104,63 @@ class SAM2_Predictor(object):
         else:
             result = self._postprocess(masks, classes, vocabulary)
 
+        if MANUAL_MEMORY_PURGE:
+            # Clean up temporaries and free CUDA memory (keep models loaded by default)
+            try:
+                del detections
+            except Exception:
+                pass
+
+            self.purge_memory(unload_model=True)
+
         return {
             "result": result,
             "image": image_data,
             "vocabulary": vocabulary,
         }
+
+    def purge_memory(self, unload_model: bool = False):
+        """
+        Free Python and CUDA memory. If unload_model is True, attempt to move model weights to CPU and remove references.
+        """
+        try:
+            # delete transient predictor (holds activations)
+            if hasattr(self, "sam2_predictor") and self.sam2_predictor is not None:
+                try:
+                    del self.sam2_predictor
+                except Exception:
+                    pass
+                self.sam2_predictor = None
+
+            # optionally move models to CPU and drop references
+            if unload_model:
+                try:
+                    if hasattr(self, "sam2_model"):
+                        self.sam2_model.to("cpu")
+                except Exception:
+                    pass
+                try:
+                    if hasattr(self, "florence2_model"):
+                        self.florence2_model.to("cpu")
+                except Exception:
+                    pass
+
+                try:
+                    del self.sam2_model
+                except Exception:
+                    pass
+                try:
+                    del self.florence2_model
+                except Exception:
+                    pass
+        finally:
+            gc.collect()
+            if torch.cuda.is_available():
+                try:
+                    torch.cuda.synchronize()
+                except Exception:
+                    pass
+                torch.cuda.empty_cache()
 
     def resize_image(self, image: np.ndarray, max_size: int = 512) -> np.ndarray:
         """

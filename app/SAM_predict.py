@@ -5,6 +5,8 @@ from typing import List, Union
 import numpy as np
 import torchvision
 
+from app.SAN_predict import MANUAL_MEMORY_PURGE
+
 try:
     # ignore ShapelyDeprecationWarning from fvcore
     import warnings
@@ -37,7 +39,14 @@ SAM_CHECKPOINT_PATH = "/app/SAN/Grounded-Segment-Anything/sam_vit_h_4b8939.pth"
 BOX_THRESHOLD = 0.25
 TEXT_THRESHOLD = 0.25
 NMS_THRESHOLD = 0.8
-RETURN_LOGITS = True
+RETURN_LOGITS = False
+MANUAL_MEMORY_PURGE = True
+
+# Force python GC and clear the CUDA cache
+gc.collect()
+if torch.cuda.is_available():
+    torch.cuda.synchronize()
+    torch.cuda.empty_cache()
 
 class SAM_Predictor(object):
     def __init__(
@@ -121,11 +130,90 @@ class SAM_Predictor(object):
         else:
             result = seg_map
 
+        if MANUAL_MEMORY_PURGE:
+            # convert torch tensors to cpu numpy if necessary
+            try:
+                if isinstance(result, torch.Tensor):
+                    result = result.detach().cpu().numpy()
+            except Exception:
+                pass
+
+            # ensure numpy arrays for masks as well
+            try:
+                if isinstance(detections.mask, torch.Tensor):
+                    detections.mask = detections.mask.detach().cpu().numpy()
+            except Exception:
+                pass
+
+            # Clean up large temporaries
+            try:
+                del logits
+            except Exception:
+                pass
+            try:
+                del detections
+            except Exception:
+                pass
+
+            # delete predictor instance (frees SAM activations) and free GPU memory
+            try:
+                if hasattr(self, "sam_predictor") and self.sam_predictor is not None:
+                    del self.sam_predictor
+                    self.sam_predictor = None
+            except Exception:
+                pass
+
+            self.purge_memory(unload_model=True)
+
         return {
             "result": result,
             "image": image_data,
             "vocabulary": vocabulary,
         }
+
+    def purge_memory(self, unload_model: bool = False):
+        """
+        Free Python and CUDA memory. If unload_model is True the model weights are moved to CPU and deleted.
+        """
+        try:
+            # delete predictor instance (holds GPU activations)
+            if hasattr(self, "sam_predictor") and self.sam_predictor is not None:
+                try:
+                    del self.sam_predictor
+                except Exception:
+                    pass
+                self.sam_predictor = None
+
+            # move models to CPU to free GPU parameters
+            if unload_model:
+                try:
+                    if hasattr(self, "grounding_dino_model") and hasattr(self.grounding_dino_model, "to"):
+                        self.grounding_dino_model.to("cpu")
+                except Exception:
+                    pass
+                try:
+                    if hasattr(self, "sam_model"):
+                        self.sam_model.to("cpu")
+                except Exception:
+                    pass
+
+                # optionally delete model references
+                try:
+                    del self.grounding_dino_model
+                except Exception:
+                    pass
+                try:
+                    del self.sam_model
+                except Exception:
+                    pass
+        finally:
+            gc.collect()
+            if torch.cuda.is_available():
+                try:
+                    torch.cuda.synchronize()
+                except Exception:
+                    pass
+                torch.cuda.empty_cache()
 
     def resize_image(self, image: np.ndarray, max_size: int = 512) -> np.ndarray:
         """
