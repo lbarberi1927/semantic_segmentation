@@ -26,7 +26,7 @@ repos:
   #     - id: markdownlint
   #       args: ["-r", "~MD002,~MD013,~MD024,~MD029,~MD033,~MD034,~MD036", "-t", "allow_different_nesting"]
   - repo: https://github.com/myint/docformatter
-    rev: v1.4
+    rev: v1.7.7
     hooks:
       - id: docformatter
         args: ["--in-place", "--wrap-descriptions", "79"]
