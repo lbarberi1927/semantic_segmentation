@@ -1,11 +1,9 @@
 import gc
-import time
 from typing import List, Union
 
 import numpy as np
 import torchvision
 
-from app.SAN_predict import MANUAL_MEMORY_PURGE
 
 try:
     # ignore ShapelyDeprecationWarning from fvcore
@@ -16,7 +14,6 @@ try:
     warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
 except:
     pass
-import os
 from groundingdino.util.inference import Model
 from segment_anything import sam_model_registry, SamPredictor
 import supervision as sv
@@ -25,16 +22,15 @@ import cv2
 
 
 import torch
-import torch.nn.functional as F
 from PIL import Image
 
 # GroundingDINO config and checkpoint
-GROUNDING_DINO_CONFIG_PATH = "/app/SAN/Grounded-Segment-Anything/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
-GROUNDING_DINO_CHECKPOINT_PATH = "/app/SAN/Grounded-Segment-Anything/groundingdino_swint_ogc.pth"
+GROUNDING_DINO_CONFIG_PATH = "/app/Grounded-Segment-Anything/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
+GROUNDING_DINO_CHECKPOINT_PATH = "/app/Grounded-Segment-Anything/groundingdino_swint_ogc.pth"
 
 # Segment-Anything checkpoint
-SAM_ENCODER_VERSION = "vit_h"  # choose from "vit_h", "vit_l", "vit_b"
-SAM_CHECKPOINT_PATH = "/app/SAN/Grounded-Segment-Anything/sam_vit_h_4b8939.pth"
+SAM_ENCODER_VERSION = "vit_h"
+SAM_CHECKPOINT_PATH = "/app/Grounded-Segment-Anything/sam_vit_h_4b8939.pth"
 
 BOX_THRESHOLD = 0.25
 TEXT_THRESHOLD = 0.25
@@ -119,11 +115,8 @@ class SAM_Predictor(object):
                 xyxy=detections.xyxy
             )
 
-            print("Generated masks shape:", detections.mask.shape, flush=True)
 
         seg_map = self._postprocess(detections.mask, detections.class_id, len(vocabulary))
-        print("seg_map shape:", seg_map.shape, flush=True)
-        print("logits shape:", logits.shape, flush=True)
 
         if RETURN_LOGITS:
             result = logits

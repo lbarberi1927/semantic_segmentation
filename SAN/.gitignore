@@ -39,7 +39,7 @@ model_ts*.txt
 *~
 
 # editor settings
-.idea
+../.idea
 .vscode
 _darcs
 

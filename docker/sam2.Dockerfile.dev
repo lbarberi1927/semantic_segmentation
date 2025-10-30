@@ -1,3 +1,2 @@
 FROM lbarberi/sam2:base
-COPY ./app/ /app/SAN/app/
-WORKDIR /app/
+COPY ./app/ /app/app/

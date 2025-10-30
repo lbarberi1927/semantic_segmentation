@@ -1,17 +1,16 @@
 FROM nvcr.io/nvidia/pytorch:22.04-py3
-LABEL image=sam-base
 
-WORKDIR /app/SAN
+WORKDIR /app
 COPY ./Grounded-Segment-Anything ./Grounded-Segment-Anything
 
-WORKDIR /app/SAN/Grounded-Segment-Anything
+WORKDIR /app/Grounded-Segment-Anything
 RUN export AM_I_DOCKER=True && export BUILD_WITH_CUDA=True
 ENV CUDA_HOME="/usr/local/cuda"
 ENV PATH="/usr/local/cuda/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
 
 RUN python -m pip install -e segment_anything
-#RUN python -m pip install --no-build-isolation -e GroundingDINO
+#RUN python -m pip install --no-build-isolation -e GroundingDINO  # this is the problematic package
 RUN pip install --upgrade diffusers[torch]
 RUN git submodule update --init --recursive
 RUN cd grounded-sam-osx && bash install.sh
@@ -20,5 +19,3 @@ RUN pip install -r ./recognize-anything/requirements.txt
 RUN pip install -e ./recognize-anything/
 RUN pip install opencv-python-headless==4.5.3.56
 # RUN apt-get update && apt-get install ffmpeg libsm6 libxext6  -y
-
-WORKDIR /app/SAN

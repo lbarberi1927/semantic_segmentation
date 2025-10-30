@@ -21,14 +21,13 @@ from transformers import AutoProcessor, AutoModelForCausalLM
 import cv2
 
 import torch
-import torch.nn.functional as F
 from PIL import Image
 
 torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
 
 torch.autocast(device_type="cuda", dtype=torch.bfloat16).__enter__()
 FLORENCE2_MODEL_ID = "microsoft/Florence-2-large"
-SAM2_CHECKPOINT = "SAN/Grounded-SAM-2/checkpoints/sam2.1_hiera_large.pt"
+SAM2_CHECKPOINT = "/app/Grounded-SAM-2/checkpoints/sam2.1_hiera_large.pt"
 SAM2_CONFIG = "configs/sam2.1/sam2.1_hiera_l.yaml"
 RETURN_LOGITS = True
 MANUAL_MEMORY_PURGE = True

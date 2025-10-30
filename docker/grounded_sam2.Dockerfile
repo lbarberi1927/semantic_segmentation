@@ -12,8 +12,6 @@ ENV CUDA_HOME=/usr/local/cuda-12.1/
 ENV PATH=/usr/local/cuda-12.1/bin:${PATH}
 ENV LD_LIBRARY_PATH=/usr/local/cuda-12.1/lib64:${LD_LIBRARY_PATH}
 
-RUN which nvcc
-
 # Install required packages and specific gcc/g++
 RUN apt-get update && apt-get install --no-install-recommends wget ffmpeg=7:* \
     libsm6=2:* libxext6=2:* git=1:* nano vim=2:* ninja-build gcc-10 g++-10 -y \
@@ -22,10 +20,10 @@ RUN apt-get update && apt-get install --no-install-recommends wget ffmpeg=7:* \
 ENV CC=gcc-10
 ENV CXX=g++-10
 
-RUN mkdir -p /app/SAN/Grounded-SAM-2
-COPY ./Grounded-SAM-2 /app/SAN/Grounded-SAM-2/
+RUN mkdir -p /app/Grounded-SAM-2
+COPY ./Grounded-SAM-2 /app/Grounded-SAM-2/
 
-WORKDIR /app/SAN/Grounded-SAM-2
+WORKDIR /app/Grounded-SAM-2
 
 
 # Install essential Python packages

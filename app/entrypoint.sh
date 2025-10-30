@@ -1,1 +1,1 @@
-python /app/SAN/app/server.py
+python /app/app/server.py

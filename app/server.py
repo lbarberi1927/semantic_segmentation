@@ -62,7 +62,6 @@ def predict():
 
         # convert tensors to base64
         for k, v in result.items():
-            print("k", k, "v", type(v))
             if isinstance(v, torch.Tensor):
                 arr = v.cpu().numpy()
                 arr = np.ascontiguousarray(arr)
