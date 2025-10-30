@@ -6,6 +6,11 @@ This repository contains code to run open-vocabulary semantic segmentation using
 
 ### Installation and Setup
 
+To clone this repo including its submodules, please run:
+```bash
+git clone --recurse-submodules <repo_url>
+```
+
 To run the code, please use docker for an easy setup. Depending on which model you want to use,
 please run the corresponding model server file to start the docker container.
 
