@@ -9,6 +9,5 @@ WORKDIR /app
 COPY ./SAN /app/SAN
 RUN pip install --no-cache-dir /app/SAN
 COPY ./app /app/app
-COPY ./configs /app/configs
 # RUN pip install .
 # RUN ln -s /app/SAN/resources/clip /root/.cache/clip
