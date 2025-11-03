@@ -1,13 +1,16 @@
-import gc
-
-from typing import List, Union
-
-import numpy as np
+from typing import List
 from PIL import Image
+
 from torchvision.transforms.functional import pil_to_tensor
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # project root
+
+from app.base import Predictor
+
 try:
-    # ignore ShapelyDeprecationWarning from fvcore
     import warnings
 
     from shapely.errors import ShapelyDeprecationWarning
@@ -21,26 +24,26 @@ from torch.nn import functional as F
 
 MANUAL_MEMORY_PURGE = False
 
-# Force python GC and clear the CUDA cache
-gc.collect()
-if torch.cuda.is_available():
-    torch.cuda.synchronize()
-    torch.cuda.empty_cache()
 
-
-class RADIO_Predictor(object):
+class RADIO_Predictor(Predictor):
     def __init__(
         self,
+        adaptor: str = "siglip",
     ):
         """
-        Args:
-            config_file (str): the config file path
-            model_path (str): the model path
+        args:
+            adaptor (str): the adaptor to use for the RADIO model
         """
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print("Using device:", self.device, flush=True)
-        self.adaptor = "siglip"
+        super().__init__(manual_memory_purge=MANUAL_MEMORY_PURGE)
+        self.adaptor = adaptor
+        self._load_model()
 
+    def _load_model(self):
+        """Load the RADIO model.
+
+        Returns:
+            torch.nn.Module: the loaded RADIO model
+        """
         self.model = torch.hub.load(
             "NVlabs/RADIO",
             "radio_model",
@@ -49,122 +52,38 @@ class RADIO_Predictor(object):
             adaptor_names=self.adaptor,
         )
 
-    def predict(
-        self,
-        image_data_or_path: Union[Image.Image, str],
-        vocabulary: List[str] = [],
-    ) -> Union[dict, None]:
-        """Predict the segmentation result.
+    def _run_model(self, image_tensor: torch.Tensor, vocabulary: List[str]):
+        self.model.to(device=self.device).eval()
 
-        Args:
-            image_data_or_path (Union[Image.Image, str]): the input image or the image path
-            vocabulary (List[str]): the vocabulary used for the segmentation
-        Returns:
-            Union[dict, None]: the segmentation result
-        """
-        image_data = Image.open(image_data_or_path).convert("RGB")
+        adaptor = self.model.adaptors[self.adaptor]
+        tokenizer = adaptor.tokenizer
 
-        vocabulary = list(set([v.lower().strip() for v in vocabulary]))
-        # remove invalid vocabulary
-        vocabulary = [v for v in vocabulary if v != ""]
-
-        image_tensor = self._preprocess(image_data)
-        print("model patch size: ", self.model.patch_size)
-        print("image size: ", image_tensor.shape, flush=True)
-        print("preferred resolution: ", self.model.preferred_resolution, flush=True)
-
+        # prepare tokens and run model
+        tokens = tokenizer(vocabulary).to(self.device)
         with torch.no_grad():
-            self.model.to(device=self.device.type).eval()
-
-            adaptor = self.model.adaptors[self.adaptor]
-            tokenizer = adaptor.tokenizer
-            tokens = tokenizer(vocabulary).to(self.device.type)
-            output = self.model(image_tensor)
+            output = self.model(image_tensor.to(self.device))
             summary, features = output[self.adaptor]
-            print("siglip summary shape:", summary.shape, flush=True)
-            print("siglip features shape:", features.shape, flush=True)
-
             text_embeddings = adaptor.encode_text(tokens)
-            print("text embeddings shape:", text_embeddings.shape, flush=True)
 
-        f_norm = F.normalize(features, p=2, dim=2)  # normalize along feature dimension
-        t_norm = F.normalize(text_embeddings, p=2, dim=1)
+        # normalized similarity
+        f_norm = F.normalize(features, p=2, dim=2)  # (1, N, D)
+        t_norm = F.normalize(text_embeddings, p=2, dim=1)  # (M, D)
+        sim = torch.einsum("bnd,md->bnm", f_norm, t_norm)  # (1, N, M)
+        sim = sim.squeeze(0).T  # (M, N)
 
-        # Compute similarity: (1, N, D) x (M, D) → (1, N, M)
-        sim = torch.einsum("bnd,md->bnm", f_norm, t_norm)
-
-        sim = sim.squeeze(0).T
-
+        # place-holder H/W; could be derived from model.patch_size or summary shape
         H, W = 48, 48
         result = sim.reshape(sim.shape[0], H, W)
 
-        if MANUAL_MEMORY_PURGE:
-            # Clean up temporaries and free CUDA memory (keep models loaded by default)
-            try:
-                del summary, features, text_embeddings
-            except Exception:
-                pass
+        return result
 
-            self.purge_memory(unload_model=True)
-
-        return {
-            "result": result,
-            "image": image_data,
-            "vocabulary": vocabulary,
-        }
-
-    def purge_memory(self, unload_model: bool = False):
-        """Free Python and CUDA memory.
-
-        If unload_model is True, attempt to move model weights to CPU and
-        remove references.
-        """
-        try:
-            # delete transient predictor (holds activations)
-            if hasattr(self, "sam2_predictor") and self.sam2_predictor is not None:
-                try:
-                    del self.sam2_predictor
-                except Exception:
-                    pass
-                self.sam2_predictor = None
-
-            # optionally move models to CPU and drop references
-            if unload_model:
-                try:
-                    if hasattr(self, "sam2_model"):
-                        self.sam2_model.to("cpu")
-                except Exception:
-                    pass
-                try:
-                    if hasattr(self, "florence2_model"):
-                        self.florence2_model.to("cpu")
-                except Exception:
-                    pass
-
-                try:
-                    del self.sam2_model
-                except Exception:
-                    pass
-                try:
-                    del self.florence2_model
-                except Exception:
-                    pass
-        finally:
-            gc.collect()
-            if torch.cuda.is_available():
-                try:
-                    torch.cuda.synchronize()
-                except Exception:
-                    pass
-                torch.cuda.empty_cache()
-
-    def _preprocess(self, image: np.ndarray) -> np.ndarray:
+    def _preprocess(self, image: Image.Image) -> torch.Tensor:
         """Resize the input image to have the maximum side length of max_size.
 
         Args:
-            image (np.ndarray): the input image
+            image (Image.Image): the input image
         Returns:
-            np.ndarray: the resized image
+            torch.Tensor: the resized image
         """
         x = pil_to_tensor(image).to(dtype=torch.float32, device="cuda")
         x = x.unsqueeze(0)
@@ -175,13 +94,8 @@ class RADIO_Predictor(object):
 
         return x
 
-    def _postprocess(self, features, text_embeddings) -> np.ndarray:
-        """Postprocess the segmentation result.
-
-        Returns:
-            np.ndarray: the postprocessed segmentation result
-        """
-        pass
+    def _postprocess(self, model_output: torch.Tensor) -> dict:
+        return {"result": model_output.cpu().numpy()}
 
 
 if __name__ == "__main__":

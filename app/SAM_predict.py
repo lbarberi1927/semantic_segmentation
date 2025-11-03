@@ -1,9 +1,14 @@
 import gc
-from typing import List, Union
+from typing import List, Union, Tuple
 
 import numpy as np
 import torchvision
 
+import torch
+from PIL import Image
+import cv2
+import sys
+from pathlib import Path
 
 try:
     # ignore ShapelyDeprecationWarning from fvcore
@@ -17,16 +22,16 @@ except:
 from groundingdino.util.inference import Model
 from segment_anything import sam_model_registry, SamPredictor
 import supervision as sv
-import cv2
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # project root
+from app.base import Predictor
 
-
-import torch
-from PIL import Image
 
 # GroundingDINO config and checkpoint
 GROUNDING_DINO_CONFIG_PATH = "/app/Grounded-Segment-Anything/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
-GROUNDING_DINO_CHECKPOINT_PATH = "/app/Grounded-Segment-Anything/groundingdino_swint_ogc.pth"
+GROUNDING_DINO_CHECKPOINT_PATH = (
+    "/app/Grounded-Segment-Anything/groundingdino_swint_ogc.pth"
+)
 
 # Segment-Anything checkpoint
 SAM_ENCODER_VERSION = "vit_h"
@@ -38,23 +43,16 @@ NMS_THRESHOLD = 0.8
 RETURN_LOGITS = False
 MANUAL_MEMORY_PURGE = True
 
-# Force python GC and clear the CUDA cache
-gc.collect()
-if torch.cuda.is_available():
-    torch.cuda.synchronize()
-    torch.cuda.empty_cache()
 
-class SAM_Predictor(object):
+class SAM_Predictor(Predictor):
     def __init__(
-            self,
+        self,
     ):
-        """
-        Args:
-            config_file (str): the config file path
-            model_path (str): the model path
-        """
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print("Using device:", self.device, flush=True)
+        super().__init__(MANUAL_MEMORY_PURGE)
+        self._load_model()
+
+    def _load_model(self):
+        """Load the GroundingDINO and SAM models."""
         # Building GroundingDINO inference model
         self.grounding_dino_model = Model(
             model_config_path=GROUNDING_DINO_CONFIG_PATH,
@@ -62,42 +60,40 @@ class SAM_Predictor(object):
             device=self.device,
         )
 
-        # Building SAM Model and SAM SAM2_Predictor
-        self.sam_model = sam_model_registry[SAM_ENCODER_VERSION](checkpoint=SAM_CHECKPOINT_PATH)
+        # Building SAM Model
+        self.model = sam_model_registry[SAM_ENCODER_VERSION](
+            checkpoint=SAM_CHECKPOINT_PATH
+        )
+        self.predictor = SamPredictor(self.model)
 
-
-    def predict(
+    def _run_model(
         self,
-        image_data_or_path: Union[Image.Image, str],
-        vocabulary: List[str] = [],
-    ) -> Union[dict, None]:
-        """
-        Predict the segmentation result.
+        image_tensor: torch.Tensor,
+        vocabulary: List[str],
+    ) -> torch.Tensor:
+        """Run the GroundingDINO + SAM model on the input image and vocabulary.
+
         Args:
-            image_data_or_path (Union[Image.Image, str]): the input image or the image path
-            vocabulary (List[str]): the vocabulary used for the segmentation
+            image_tensor (torch.Tensor): the input image tensor
+            vocabulary (List[str]): the vocabulary used for segmentation
         Returns:
-            Union[dict, None]: the segmentation result
+            torch.Tensor: the segmentation result
         """
-        image_data = cv2.imread(image_data_or_path)
-
-        vocabulary = list(set([v.lower().strip() for v in vocabulary]))
-        # remove invalid vocabulary
-        vocabulary = [v for v in vocabulary if v != ""]
-
-        #image_data = self.resize_image(image_data, max_size=1024)
-
         with torch.no_grad():
 
             # Step 1: Object Detection using GroundingDINO
-            detections = self.object_detection(image_data, vocabulary)
+            detections = self.object_detection(image_tensor, vocabulary)
 
             # NMS post process
-            nms_idx = torchvision.ops.nms(
-                torch.from_numpy(detections.xyxy),
-                torch.from_numpy(detections.confidence),
-                NMS_THRESHOLD
-            ).numpy().tolist()
+            nms_idx = (
+                torchvision.ops.nms(
+                    torch.from_numpy(detections.xyxy),
+                    torch.from_numpy(detections.confidence),
+                    NMS_THRESHOLD,
+                )
+                .numpy()
+                .tolist()
+            )
 
             detections.xyxy = detections.xyxy[nms_idx]
             detections.confidence = detections.confidence[nms_idx]
@@ -111,137 +107,43 @@ class SAM_Predictor(object):
             # Step 2: Generate masks using SAM
             # convert detections to masks
             detections.mask, logits = self.segment(
-                image=cv2.cvtColor(image_data, cv2.COLOR_BGR2RGB),
-                xyxy=detections.xyxy
+                image=cv2.cvtColor(image_tensor, cv2.COLOR_BGR2RGB),
+                xyxy=detections.xyxy,
             )
-
-
-        seg_map = self._postprocess(detections.mask, detections.class_id, len(vocabulary))
 
         if RETURN_LOGITS:
             result = logits
         else:
-            result = seg_map
+            result = detections.mask, detections.class_id, len(vocabulary)
 
-        if MANUAL_MEMORY_PURGE:
-            # convert torch tensors to cpu numpy if necessary
-            try:
-                if isinstance(result, torch.Tensor):
-                    result = result.detach().cpu().numpy()
-            except Exception:
-                pass
+        return result
 
-            # ensure numpy arrays for masks as well
-            try:
-                if isinstance(detections.mask, torch.Tensor):
-                    detections.mask = detections.mask.detach().cpu().numpy()
-            except Exception:
-                pass
+    def _preprocess(self, image: Image.Image) -> np.ndarray:
+        """Convert PIL image to numpy array.
 
-            # Clean up large temporaries
-            try:
-                del logits
-            except Exception:
-                pass
-            try:
-                del detections
-            except Exception:
-                pass
-
-            # delete predictor instance (frees SAM activations) and free GPU memory
-            try:
-                if hasattr(self, "sam_predictor") and self.sam_predictor is not None:
-                    del self.sam_predictor
-                    self.sam_predictor = None
-            except Exception:
-                pass
-
-            self.purge_memory(unload_model=True)
-
-        return {
-            "result": result,
-            "image": image_data,
-            "vocabulary": vocabulary,
-        }
-
-    def purge_memory(self, unload_model: bool = False):
-        """
-        Free Python and CUDA memory. If unload_model is True the model weights are moved to CPU and deleted.
-        """
-        try:
-            # delete predictor instance (holds GPU activations)
-            if hasattr(self, "sam_predictor") and self.sam_predictor is not None:
-                try:
-                    del self.sam_predictor
-                except Exception:
-                    pass
-                self.sam_predictor = None
-
-            # move models to CPU to free GPU parameters
-            if unload_model:
-                try:
-                    if hasattr(self, "grounding_dino_model") and hasattr(self.grounding_dino_model, "to"):
-                        self.grounding_dino_model.to("cpu")
-                except Exception:
-                    pass
-                try:
-                    if hasattr(self, "sam_model"):
-                        self.sam_model.to("cpu")
-                except Exception:
-                    pass
-
-                # optionally delete model references
-                try:
-                    del self.grounding_dino_model
-                except Exception:
-                    pass
-                try:
-                    del self.sam_model
-                except Exception:
-                    pass
-        finally:
-            gc.collect()
-            if torch.cuda.is_available():
-                try:
-                    torch.cuda.synchronize()
-                except Exception:
-                    pass
-                torch.cuda.empty_cache()
-
-    def resize_image(self, image: np.ndarray, max_size: int = 512) -> np.ndarray:
-        """
-        resize the input image to have the maximum side length of max_size.
         Args:
-            image (np.ndarray): the input image
-            max_size (int): the maximum side length
+            image (Image.Image): the input image
         Returns:
-            np.ndarray: the resized image
+            np.ndarray: the converted image
         """
-        h, w, _ = image.shape
-        scale = max_size / max(h, w)
-        if scale < 1.0:
-            new_w = int(w * scale)
-            new_h = int(h * scale)
-            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-            print(f"resized image from ({w}, {h}) to ({new_w}, {new_h})", flush=True)
-        return image
-
+        image = np.array(image)
+        return cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
     def object_detection(self, image: torch.Tensor, vocabulary: List[str]):
-        """
-        Perform object detection on the input image using GroundingDINO.
+        """Perform object detection on the input image using GroundingDINO.
+
         Args:
             image (torch.Tensor): the input image
             vocabulary (List[str]): the vocabulary used for detection
         Returns:
             List[dict]: list of detected objects with bounding boxes and labels
         """
-        #caption_vocab = ". ".join(vocabulary)
+        # caption_vocab = ". ".join(vocabulary)
         detections = self.grounding_dino_model.predict_with_classes(
             image=image,
             classes=vocabulary,
             box_threshold=BOX_THRESHOLD,
-            text_threshold=TEXT_THRESHOLD
+            text_threshold=TEXT_THRESHOLD,
         )
         # --- Free GroundingDINO GPU activations and cache before running SAM ---
         try:
@@ -259,45 +161,56 @@ class SAM_Predictor(object):
             print("Warning: could not move grounding dino to cpu:", e, flush=True)
         return detections
 
-    def segment(self, image: np.ndarray, xyxy: np.ndarray) -> np.ndarray:
+    def segment(
+        self, image: np.ndarray, xyxy: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Perform segmentation on the input image using SAM.
+
+        Args:
+            image (np.ndarray): the input image
+            xyxy (np.ndarray): bounding boxes for segmentation
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: tuple of masks and logits
+        """
         # Ensure SAM is on the GPU only now (lazy move / initialize)
-        self.sam_predictor = SamPredictor(self.sam_model.to(self.device))
-        self.sam_predictor.set_image(image)
+        self.predictor = SamPredictor(self.model.to(self.device))
+        self.predictor.set_image(image)
         result_masks = []
         result_logits = []
         for box in xyxy:
-            masks, scores, logits = self.sam_predictor.predict(
-                box=box,
-                multimask_output=True
+            masks, scores, logits = self.predictor.predict(
+                box=box, multimask_output=True
             )
             index = np.argmax(scores)
             result_masks.append(masks[index])
             result_logits.append(logits[index])
+
         return np.array(result_masks), np.array(result_logits)
 
-    def _postprocess(
-            self, mask, classes, len_vocab
-    ) -> np.ndarray:
-        """
-        Postprocess the segmentation result.
+    def _postprocess(self, model_output: Union[torch.Tensor, tuple]) -> dict:
+        """Postprocess the segmentation result.
+
         Args:
-            result (torch.Tensor): the segmentation result
-            ori_vocabulary (List[str]): the original vocabulary used for the segmentation
+            model_output (Union[torch.Tensor, tuple]): the raw model output
         Returns:
-            np.ndarray: the postprocessed segmentation result
+            dict: dict with the final segmentation map
         """
-        #result = result.argmax(dim=0).cpu().numpy()  # (H, W)
-        n_boxes, h, w = mask.shape
-        out = torch.zeros((len_vocab, h, w), dtype=torch.uint8, device=self.device)
+        if type(model_output) == tuple:
+            mask, classes, len_vocab = model_output
+            n_boxes, h, w = mask.shape
+            out = torch.zeros((len_vocab, h, w), dtype=torch.uint8, device=self.device)
 
-        # Assign by iterating masks; later masks override earlier ones
-        for i in range(n_boxes):
-            cls_id = classes[i]
-            m = torch.from_numpy(mask[i]).to(device=self.device)  # (h, w)
-            out[cls_id, m] = 1
+            # Assign by iterating masks; later masks override earlier ones
+            for i in range(n_boxes):
+                cls_id = classes[i]
+                m = torch.from_numpy(mask[i]).to(device=self.device)  # (h, w)
+                out[cls_id, m] = 1
 
-        out = out.cpu().numpy()
-        return out
+            out = out.cpu().numpy()
+        else:
+            out = model_output.cpu().numpy()
+
+        return {"result": out}
 
 
 if __name__ == "__main__":

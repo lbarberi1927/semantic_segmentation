@@ -1,4 +1,3 @@
-import gc
 from typing import List, Union
 
 import numpy as np
@@ -25,6 +24,13 @@ from detectron2.utils.visualizer import Visualizer, random_color
 from huggingface_hub import hf_hub_download
 from PIL import Image
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # project root
+
+from app.base import Predictor
+
 from san import add_san_config
 from san.data.datasets.register_coco_stuff_164k import COCO_CATEGORIES
 
@@ -42,18 +48,16 @@ config_file = os.path.join(
     os.path.dirname(os.path.realpath(__file__)),
     "../SAN/configs/san_clip_vit_large_res4_coco.yaml",
 )
-model_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "../SAN/resources/san_vit_large_14.pth")
+model_path = os.path.join(
+    os.path.dirname(os.path.realpath(__file__)), "../SAN/resources/san_vit_large_14.pth"
+)
 
 MANUAL_MEMORY_PURGE = True  # set to False to disable manual memory purge
-# Force python GC and clear the CUDA cache
-gc.collect()
-if torch.cuda.is_available():
-    torch.cuda.synchronize()
-    torch.cuda.empty_cache()
+
 
 def download_model(model_path: str):
-    """
-    Download the model from huggingface hub.
+    """Download the model from huggingface hub.
+
     Args:
         model_path (str): the model path
     Returns:
@@ -67,9 +71,7 @@ def download_model(model_path: str):
 
 
 def setup(config_file: str, device=None):
-    """
-    Create configs and perform basic setups.
-    """
+    """Create configs and perform basic setups."""
     cfg = get_cfg()
     # for poly lr schedule
     add_deeplab_config(cfg)
@@ -80,17 +82,21 @@ def setup(config_file: str, device=None):
     return cfg
 
 
-class SAN_Predictor(object):
+class SAN_Predictor(Predictor):
     def __init__(
-            self,
-            config_file: str = config_file,
-            model_path: str = model_path,
+        self,
+        config_file: str = config_file,
+        model_path: str = model_path,
     ):
         """
         Args:
             config_file (str): the config file path
             model_path (str): the model path
         """
+        super().__init__(manual_memory_purge=MANUAL_MEMORY_PURGE)
+        self._load_model(config_file, model_path)
+
+    def _load_model(self, config_file: str, model_path: str):
         print("Loading config from: ", config_file)
         cfg = setup(config_file)
         print("Building model")
@@ -103,127 +109,21 @@ class SAN_Predictor(object):
             model_path
         )
         print("Loaded model from: ", model_path)
-        self.model.eval()
-        print("Start compiling model")
-        # self.model = torch.compile(self.model)
-        print("Compiled model")
-        if torch.cuda.is_available():
-            self.device = torch.device("cuda")
-            self.model = self.model.cuda()
 
-    def predict(
-        self,
-        image_data_or_path: Union[Image.Image, str],
-        vocabulary: List[str] = [],
-        augment_vocabulary: Union[str, bool] = True,
-        output_file: str = None,
-    ) -> Union[dict, None]:
-        """
-        Predict the segmentation result.
-        Args:
-            image_data_or_path (Union[Image.Image, str]): the input image or the image path
-            vocabulary (List[str]): the vocabulary used for the segmentation
-            augment_vocabulary (bool): whether to augment the vocabulary
-            output_file (str): the output file path
-        Returns:
-            Union[dict, None]: the segmentation result
-        """
-        if isinstance(image_data_or_path, str):
-            image_data = Image.open(image_data_or_path)
-        else:
-            image_data = image_data_or_path
-        w, h = image_data.size
-        image_tensor: torch.Tensor = self._preprocess(image_data)
-        vocabulary = list(set([v.lower().strip() for v in vocabulary]))
-        # remove invalid vocabulary
-        vocabulary = [v for v in vocabulary if v != ""]
-        ori_vocabulary = vocabulary
-
-        if isinstance(augment_vocabulary, str):
-            vocabulary = self.augment_vocabulary(vocabulary, augment_vocabulary)
-        elif isinstance(augment_vocabulary, bool) and augment_vocabulary:
-            vocabulary = self._merge_vocabulary(vocabulary)
-
-        if len(ori_vocabulary) == 0:
-            ori_vocabulary = vocabulary
-
+    def _run_model(self, image_tensor: torch.Tensor, vocabulary: List[str]):
+        self.model.to(device=self.device).eval()
         with torch.no_grad():
-            raw_result = self.model(
+            output = self.model(
                 [
                     {
-                        "image": image_tensor,
-                        "height": h,
-                        "width": w,
+                        "image": image_tensor.to(self.device),
+                        "height": image_tensor.shape[1],
+                        "width": image_tensor.shape[2],
                         "vocabulary": vocabulary,
                     }
                 ]
             )[0]["sem_seg"]
-
-        # Move result to CPU immediately to free GPU memory
-        try:
-            result_cpu = raw_result.detach().cpu()
-        except Exception:
-            result_cpu = raw_result.cpu() if hasattr(raw_result, "cpu") else raw_result
-
-        seg_map = self._postprocess(result_cpu, ori_vocabulary)
-
-        # build return value using CPU tensor (not GPU tensor)
-        ret = {
-            "result": result_cpu,
-            "image": image_data,
-            "sem_seg": seg_map,
-            "vocabulary": vocabulary,
-        }
-
-        if MANUAL_MEMORY_PURGE:
-            # clean up large temporaries before returning
-            try:
-                del raw_result
-            except Exception:
-                pass
-            try:
-                del image_tensor
-            except Exception:
-                pass
-
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-            self.purge_memory(unload_model=True)
-
-        if output_file:
-            self.visualize(image_data, seg_map, ori_vocabulary, output_file)
-            return
-
-        return ret
-
-    def purge_memory(self, unload_model: bool = False):
-        """
-        Free Python and CUDA memory. If unload_model is True the model object is deleted.
-        Call this after you're done with predictions or between heavy runs.
-        """
-        try:
-            if unload_model and hasattr(self, "model"):
-                try:
-                    self.model.to("cpu")
-                except Exception:
-                    pass
-                try:
-                    delattr(self, "model")
-                except Exception:
-                    # fallback if delattr fails
-                    try:
-                        del self.model
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
-        # force Python GC and free CUDA cache
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        return output
 
     def visualize(
         self,
@@ -233,8 +133,8 @@ class SAN_Predictor(object):
         output_file: str = None,
         mode: str = "overlay",
     ) -> Union[Image.Image, None]:
-        """
-        Visualize the segmentation result.
+        """Visualize the segmentation result.
+
         Args:
             image (Image.Image): the input image
             sem_seg (np.ndarray): the segmentation result
@@ -290,8 +190,8 @@ class SAN_Predictor(object):
             return vocabulary
 
     def _preprocess(self, image: Image.Image) -> torch.Tensor:
-        """
-        Preprocess the input image.
+        """Preprocess the input image.
+
         Args:
             image (Image.Image): the input image
         Returns:
@@ -308,26 +208,20 @@ class SAN_Predictor(object):
         image = image.permute(2, 0, 1)
         return image
 
-    def _postprocess(
-        self, result: torch.Tensor, ori_vocabulary: List[str]
-    ) -> np.ndarray:
-        """
-        Postprocess the segmentation result.
+    def _postprocess(self, result: torch.Tensor) -> dict:
+        """Postprocess the segmentation result.
+
         Args:
             result (torch.Tensor): the segmentation result
-            ori_vocabulary (List[str]): the original vocabulary used for the segmentation
         Returns:
-            np.ndarray: the postprocessed segmentation result
+            dict: the postprocessed segmentation result
         """
-        result = result.argmax(dim=0).cpu().numpy()  # (H, W)
-        if len(ori_vocabulary) == 0:
-            return result
-        result[result >= len(ori_vocabulary)] = len(ori_vocabulary)
-        return result
+        return {"result": result.cpu().numpy()}
 
 
 def pre_download():
-    """pre downlaod model from huggingface and open_clip to avoid network issue."""
+    """Pre downlaod model from huggingface and open_clip to avoid network
+    issue."""
     for model_name, model_info in model_cfg.items():
         download_model(model_info["model_path"])
         cfg = setup(model_info["config_file"])
