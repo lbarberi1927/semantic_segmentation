@@ -11,17 +11,25 @@ import base64
 
 
 def parse_segmentation_model(model_str):
-    if model_str=="SAM2":
+    if model_str == "SAM2":
         from SAM2_predict import SAM2_Predictor
+
         return SAM2_Predictor()
-    elif model_str=="SAM":
+    elif model_str == "SAM":
         from SAM_predict import SAM_Predictor
+
         return SAM_Predictor()
-    elif model_str=="SAN":
+    elif model_str == "SAN":
         from SAN_predict import SAN_Predictor
+
         return SAN_Predictor()
+    elif model_str == "RADIO":
+        from RADIO_predict import RADIO_Predictor
+
+        return RADIO_Predictor()
     else:
         raise ValueError(f"Unknown segmentation model: {model_str}")
+
 
 app = Flask(__name__)
 
@@ -58,7 +66,7 @@ def predict():
             result["result"] = result["result"][: len(result["vocabulary"])]
         result.pop("image")
         result["shape"] = result["result"].shape
-        #print("result", result)
+        # print("result", result)
 
         # convert tensors to base64
         for k, v in result.items():
