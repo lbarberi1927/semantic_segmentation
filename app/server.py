@@ -24,9 +24,9 @@ def parse_segmentation_model(model_str):
 
         return SAN_Predictor()
     elif model_str == "RADIO":
-        from RADIO_predict import RADIO_Predictor
+        from RAYFRONTS_predict import RayFronts_Predictor
 
-        return RADIO_Predictor()
+        return RayFronts_Predictor()
     else:
         raise ValueError(f"Unknown segmentation model: {model_str}")
 
