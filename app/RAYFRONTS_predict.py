@@ -1,4 +1,6 @@
 from typing import List
+
+import numpy as np
 from PIL import Image
 
 from torchvision.transforms.functional import pil_to_tensor
@@ -42,8 +44,8 @@ class RayFronts_Predictor(Predictor):
         """
         self.model = NARadioEncoder(
             device=self.device,
-            input_resolution=(1024, 1024),
-            model_version="radio_v2.5-g",
+            input_resolution=(512, 512),
+            model_version="radio_v2.5-h",
             compile=False,
         )
 
@@ -56,12 +58,31 @@ class RayFronts_Predictor(Predictor):
                 image_features
             )
 
-            # compute similarity scores
-            similarity_map = compute_cos_sim(
-                text_features, aligned_image_features, softmax=True
+            resolution = self.model.input_resolution[0]
+            chunk_size: int = 10000
+            feat_map = torch.nn.functional.interpolate(
+                aligned_image_features, resolution, mode="bilinear", antialias=True
             )
+            feat_map = feat_map.squeeze(0).permute(1, 2, 0)
+            H, W, C = feat_map.shape
+            feat_map = feat_map.reshape(-1, C)
+            num_chunks = int(np.ceil(feat_map.shape[0] / chunk_size))
 
-        return similarity_map.squeeze(0)
+            cos_sim = list()
+            for c in range(num_chunks):
+                cos_sim.append(
+                    compute_cos_sim(
+                        text_features,
+                        feat_map[c * chunk_size : (c + 1) * chunk_size],
+                        softmax=True,
+                    )
+                )
+            cos_sim = torch.cat(cos_sim, dim=0)
+            N = len(vocabulary)
+            cos_sim = cos_sim.reshape(H, W, N)
+            cos_sim = cos_sim.permute(2, 0, 1)  # N x H x W
+
+        return cos_sim
 
     def _preprocess(self, image: Image.Image) -> torch.Tensor:
         """Resize the input image to have the maximum side length of max_size.
@@ -71,7 +92,7 @@ class RayFronts_Predictor(Predictor):
         Returns:
             torch.Tensor: the resized image
         """
-        x = pil_to_tensor(image).to(dtype=torch.float32, device="cuda")
+        x = pil_to_tensor(image).to(dtype=torch.float32, device="cuda") / 255.0
         x = x.unsqueeze(0)
         input_res = self.model.input_resolution
         x = F.interpolate(x, input_res)
@@ -85,7 +106,9 @@ class RayFronts_Predictor(Predictor):
 
         align_corners=False, ).squeeze(0)
         """
-        return {"result": model_output.detach().cpu().numpy()}
+        result = model_output.detach().cpu().numpy()
+        result = np.ascontiguousarray(result)
+        return {"result": result}
 
 
 if __name__ == "__main__":
