@@ -2,7 +2,7 @@
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT_DIR="$(dirname "$DIR")"
 cd $ROOT_DIR
-# SAN Dockerfile is docker/Dockerfile
+# SAN server image:
 docker build -t "lbarberi/san" -f docker/san.Dockerfile .
 echo "Docker image lbarberi/san built successfully."
 
@@ -13,3 +13,7 @@ echo "Docker image lbarberi/sam:base built successfully."
 # grounded sam2 base image:
 docker build -t "lbarberi/sam2:base" -f docker/grounded_sam2.Dockerfile .
 echo "Docker image lbarberi/sam2:base built successfully."
+
+# rayfronts server image:
+docker build -t "lbarberi/rayfronts" -f docker/rayfronts.Dockerfile .
+echo "Docker image lbarberi/rayfronts built successfully."
