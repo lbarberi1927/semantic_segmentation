@@ -27,6 +27,10 @@ def parse_segmentation_model(model_str):
         from RAYFRONTS_predict import RayFronts_Predictor
 
         return RayFronts_Predictor()
+    elif model_str == "OWSAM":
+        from OWSAM_predict import OWSAM_Predictor
+
+        return OWSAM_Predictor()
     else:
         raise ValueError(f"Unknown segmentation model: {model_str}")
 
