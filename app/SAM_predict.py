@@ -126,6 +126,7 @@ class SAM_Predictor(Predictor):
         Returns:
             np.ndarray: the converted image
         """
+        image = self.load_image(image)
         image = np.array(image)
         return cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 

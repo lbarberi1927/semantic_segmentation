@@ -23,7 +23,7 @@ def parse_segmentation_model(model_str):
         from SAN_predict import SAN_Predictor
 
         return SAN_Predictor()
-    elif model_str == "RADIO":
+    elif model_str == "RAYFRONTS":
         from RAYFRONTS_predict import RayFronts_Predictor
 
         return RayFronts_Predictor()

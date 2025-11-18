@@ -26,7 +26,7 @@ import torch
 from torch.nn import functional as F
 
 
-MANUAL_MEMORY_PURGE = False
+MANUAL_MEMORY_PURGE = True
 
 
 class RayFronts_Predictor(Predictor):
@@ -92,6 +92,7 @@ class RayFronts_Predictor(Predictor):
         Returns:
             torch.Tensor: the resized image
         """
+        image = self.load_image(image)
         x = pil_to_tensor(image).to(dtype=torch.float32, device="cuda") / 255.0
         x = x.unsqueeze(0)
         input_res = self.model.input_resolution

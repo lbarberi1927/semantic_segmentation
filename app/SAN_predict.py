@@ -197,6 +197,7 @@ class SAN_Predictor(Predictor):
         Returns:
             torch.Tensor: the preprocessed image
         """
+        image = self.load_image(image)
         image = image.convert("RGB")
         # resize short side to 640
         w, h = image.size

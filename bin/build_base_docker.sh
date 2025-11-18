@@ -17,3 +17,7 @@ echo "Docker image lbarberi/sam2:base built successfully."
 # rayfronts server image:
 docker build -t "lbarberi/rayfronts" -f docker/rayfronts.Dockerfile .
 echo "Docker image lbarberi/rayfronts built successfully."
+
+# OpenWorldSAM server image:
+docker build -t "lbarberi/owsam" -f docker/owsam.Dockerfile .
+echo "Docker image lbarberi/owsam built successfully."

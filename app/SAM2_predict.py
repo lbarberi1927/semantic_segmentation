@@ -102,6 +102,7 @@ class SAM2_Predictor(Predictor):
         Returns:
             the same image
         """
+        image = self.load_image(image)
         return image
 
     def object_detection(self, image: torch.Tensor, vocabulary: List[str]):

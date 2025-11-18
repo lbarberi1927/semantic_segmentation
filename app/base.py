@@ -92,18 +92,20 @@ class Predictor(ABC):
                     pass
                 torch.cuda.empty_cache()
 
+    def load_image(self, image_data_or_path: Union[Image.Image, str]) -> Image.Image:
+        """Load image from path or return the given PIL image."""
+        if isinstance(image_data_or_path, Image.Image):
+            return image_data_or_path
+        else:
+            return Image.open(image_data_or_path).convert("RGB")
+
     def predict(
         self, image_data_or_path: Union[Image.Image, str], vocabulary: List[str] = []
     ):
         """General predict flow: normalize vocab, ensure model loaded, preprocess, run, postprocess."""
-        # load image
-        image = image_data_or_path
-        if isinstance(image_data_or_path, (str,)):
-            image = Image.open(image_data_or_path).convert("RGB")
-
         # normalize vocabulary
         vocabulary = list({v.lower().strip() for v in vocabulary if isinstance(v, str)})
-        image_tensor = self._preprocess(image)
+        image_tensor = self._preprocess(image_data_or_path)
 
         # run model-specific logic
         raw_output = self._run_model(image_tensor, vocabulary)
@@ -116,6 +118,7 @@ class Predictor(ABC):
                 pass
             self.purge_memory()
 
+        image = self.load_image(image_data_or_path)
         # include original image and vocabulary in response
         result.setdefault("image", image)
         result.setdefault("vocabulary", vocabulary)

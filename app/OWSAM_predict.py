@@ -1,10 +1,7 @@
-import gc
-import os
 from typing import List, Union, Tuple
 
 import cv2
 import numpy as np
-from torchvision.transforms.functional import pil_to_tensor
 
 try:
     # ignore ShapelyDeprecationWarning from fvcore
@@ -24,17 +21,12 @@ _openworld_dir = _project_root / "OpenWorldSAM"
 sys.path.insert(0, str(_project_root))
 sys.path.insert(0, str(_openworld_dir))
 from app.base import Predictor
-from model import add_open_world_sam2_config
+from model import add_open_world_sam2_config, OpenWorldSAM2
 from train_net import Trainer
-from datasets.dataset_mappers.open_world_sam_semantic_dataset_mapper import (
-    beit3_preprocess,
-    sam_preprocess,
-)
+from datasets import OpenWorldSAM2InstanceDatasetMapper
 
 import torch
 from PIL import Image
-from detectron2.checkpoint import DetectionCheckpointer
-from detectron2.engine import default_setup, DefaultPredictor, DefaultTrainer
 from detectron2.config import get_cfg
 from detectron2.utils.logger import setup_logger
 import detectron2.utils.comm as comm
@@ -42,19 +34,25 @@ from detectron2.data import MetadataCatalog
 from detectron2.utils.visualizer import Visualizer, random_color
 
 
-config_file = "/home/zivi/Repositories/semantic_segmentation/OpenWorldSAM/configs/ade20k/semantic-segmentation/Open-World-SAM2-CrossAttention.yaml"
-model_file = "/app/OpenWorldSAM/checkpoints/model_final.pth"
+config_file = "/app/OpenWorldSAM/configs/ade20k/semantic-segmentation/Open-World-SAM2-CrossAttention.yaml"
+checkpoints_path = "/app/OpenWorldSAM/checkpoints/"
 RETURN_LOGITS = True
 MANUAL_MEMORY_PURGE = True
 
 
-def setup(config_file):
+def setup(config_file, checkpoints_path):
     """Create configs and perform basic setups."""
 
     cfg = get_cfg()
     cfg.set_new_allowed(True)  # Add this line before merging the file
     add_open_world_sam2_config(cfg)
     cfg.merge_from_file(config_file)
+    cfg.MODEL.WEIGHTS = checkpoints_path + "model_final.pth"
+    cfg.MODEL.OpenWorldSAM2.ENCODER_PRETRAINED = (
+        checkpoints_path + "beit3_large_patch16_224.pth"
+    )
+    cfg.MODEL.OpenWorldSAM2.VISION_PRETRAINED = checkpoints_path + "sam2_hiera_large.pt"
+    cfg.MODEL.DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
     cfg.freeze()
     setup_logger(
         output=cfg.OUTPUT_DIR, distributed_rank=comm.get_rank(), name="open-world-sam2"
@@ -66,31 +64,21 @@ class OWSAM_Predictor(Predictor):
     def __init__(
         self,
         config_file: str = config_file,
+        checkpoints_path: str = checkpoints_path,
     ):
         super().__init__(MANUAL_MEMORY_PURGE)
         self.config_file = config_file
+        self.checkpoints_path = checkpoints_path
         self._load_model()
 
     def _load_model(self):
-        cfg = setup(self.config_file)
-        self.model = DefaultTrainer.build_model(cfg)
+        cfg = setup(self.config_file, self.checkpoints_path)
+        model_dict = OpenWorldSAM2.from_config(cfg)
+        self.model = OpenWorldSAM2(**model_dict)
+        self.model.load_state_dict(torch.load(cfg.MODEL.WEIGHTS)["model"], strict=False)
+        self.model.to(device=self.device).eval()
         self.model.training = False
-        self.model.two_stage_inference = True
-        # self.model.metadata = MetadataCatalog.get(cfg['DATASETS']['TEST'][0])
-        DetectionCheckpointer(self.model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
-            cfg.MODEL.WEIGHTS
-        )
-
-    def insert_labels_into_templates(self, labels: List[str]) -> List[List[str]]:
-        """Inserts each labels into a set of stored templates.
-
-        Args:
-          labels: A list of length T of class names / labels. Ex. ['cat', 'dog']
-        Returns:
-          labeled_templates as a list of length T of a list of length P of strings.
-          where T is the number of labels and P is the number of templates.
-        """
-        return [[pt(x) for pt in openai_imagenet_template] for x in labels]
+        self.mapper = OpenWorldSAM2InstanceDatasetMapper(cfg, is_train=False)
 
     def _run_model(
         self,
@@ -105,51 +93,41 @@ class OWSAM_Predictor(Predictor):
         Returns:
             Union[torch.Tensor, Tuple]: the segmentation result
         """
-        self.model.to(device=self.device).eval()
         prompts = vocabulary  # self.insert_labels_into_templates(vocabulary)
         colors = [random_color(rgb=True, maximum=255) for _ in range(len(vocabulary))]
         MetadataCatalog.get("_temp").set(stuff_classes=vocabulary, stuff_colors=colors)
         metadata = MetadataCatalog.get("_temp")
         self.model.metadata = metadata
-        sam_image, evf_image = image_tensor
-        height = sam_image.size(1)
-        width = sam_image.size(2)
+
+        inputs = self.mapper(image_tensor)
+        inputs["prompt"] = prompts
+        inputs["unique_categories"] = range(len(vocabulary))
+
         with torch.no_grad():
-            output = self.model(
-                [
-                    {
-                        "image": sam_image,
-                        "evf_image": evf_image,
-                        "height": height,
-                        "width": width,
-                        "prompt": prompts,
-                        "unique_categories": range(len(vocabulary)),
-                    }
-                ]
-            )
+            output = self.model([inputs])
 
         output = output[0]["sem_seg"]
-
-        print("output", output.shape, flush=True)
-
-        self.sem_seg = output.argmax(dim=0).cpu().numpy()
-        self.vocabulary = vocabulary
+        MetadataCatalog.remove("_temp")
 
         return output
 
-    def _preprocess(self, image: Image.Image) -> Image.Image:
+    def _preprocess(self, image_path: str) -> dict:
         """Preprocess the input image.
 
         Args:
-            image (Image.Image): the input image
+            image_path (str): the image path
         Returns:
-            the same image
+            dict: the preprocessed image and its metadata
         """
-        self.image = image.resize((1024, 1024))
-        image_tensor = pil_to_tensor(image)
-        beit3_image = beit3_preprocess(image_tensor.double())
-        sam_image = sam_preprocess(np.array(image))
-        return sam_image, beit3_image
+        cv2_image = cv2.imread(image_path)
+        height, width = cv2_image.shape[:2]
+        dataset_dict = {
+            "file_name": image_path,
+            "image_id": 0,
+            "height": height,
+            "width": width,
+        }
+        return dataset_dict
 
     def _postprocess(
         self,
@@ -162,26 +140,12 @@ class OWSAM_Predictor(Predictor):
         Returns:
             dict: the postprocessed segmentation result
         """
-        if RETURN_LOGITS:
-            if type(result) == torch.Tensor:
-                out = result.cpu().numpy()
-            else:
-                out = result
+        # center values around 0
+        result = result - torch.mean(result)
+        if type(result) == torch.Tensor:
+            out = result.cpu().numpy()
         else:
-            mask, classes, vocabulary = result
-            n_boxes, h, w = mask.shape
-
-            out = torch.zeros(
-                (len(vocabulary), h, w), dtype=torch.uint8, device=self.device
-            )
-
-            for i in range(n_boxes):
-                cls_id = vocabulary.index(classes[i])
-                m = torch.from_numpy(mask[i]).to(device=self.device).bool()  # (h, w)
-                out[cls_id, m] = 1
-
-            out = out.cpu().numpy()
-
+            out = result
         return {"result": out}
 
     def visualize(
@@ -226,18 +190,22 @@ class OWSAM_Predictor(Predictor):
 
 if __name__ == "__main__":
     vocab = {
-        "runway": {"navigation_cost": 0.0},
-        "plane": {"navigation_cost": 0.5},
-        "car": {"navigation_cost": 1.0},
+        "person": {"navigation_cost": 0.0},
+        "gravel_path": {"navigation_cost": 0.5},
+        "dense_vegetation": {"navigation_cost": 1.0},
         "grass": {"navigation_cost": 0.3},
         "trees": {"navigation_cost": 1.0},
+        "other": {"navigation_cost": 1.0},
     }
-    predictor = OWSAM_Predictor()
+    predictor = OWSAM_Predictor(
+        config_file="/home/zivi/Repositories/semantic_segmentation/OpenWorldSAM/configs/ade20k/semantic-segmentation/Open-World-SAM2-CrossAttention.yaml",
+        checkpoints_path="/home/zivi/Repositories/semantic_segmentation/OpenWorldSAM/checkpoints/",
+    )
     result = predictor.predict(
-        "/home/zivi/Downloads/release_test/testing/test/ADE_test_00000001.jpg",
+        "/home/zivi/hiking_images/test/000000.jpg",
         list(vocab.keys()),
     )
-    predictor.visualize("segmentation_result.png", mode="overlay")
+    predictor.visualize("results/segmentation_result.png", mode="overlay")
 
     result_tensor = result["result"]
     vacabulary = result["vocabulary"]
@@ -250,5 +218,5 @@ if __name__ == "__main__":
     for i, vocab in enumerate(vacabulary):
         plt.figure(figsize=(10, 10))
         sns.heatmap(result_tensor[i])
-        plt.savefig(f"{vocab}_heatmap.png")
+        plt.savefig(f"results/{vocab}_heatmap.png")
         plt.close()
