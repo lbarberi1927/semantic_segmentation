@@ -4,3 +4,6 @@
 [submodule "Grounded-Segment-Anything"]
 	path = Grounded-Segment-Anything
 	url = git@github.com:IDEA-Research/Grounded-Segment-Anything.git
+[submodule "OpenWorldSAM"]
+    path = OpenWorldSAM
+    url = git@github.com:GinnyXiao/OpenWorldSAM.git

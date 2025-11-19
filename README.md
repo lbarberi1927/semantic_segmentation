@@ -4,7 +4,7 @@ This repository contains code to run open-vocabulary semantic segmentation using
 - Grounded Segment Anything Model (Grounded-SAM)[[Project Page]](https://github.com/IDEA-Research/Grounded-Segment-Anything?tab=readme-ov-file#grounded-segment-anything)
 - Grounded Segment Anything Model 2 (Grounded-SAM 2)[[Project Page]](https://github.com/IDEA-Research/Grounded-SAM-2)
 - RayFronts 2D Open Vocabulary Segmentation [[Paper]](https://arxiv.org/abs/2504.06994) [[Project Page]](https://github.com/RayFronts/RayFronts)
-- More models, including OpenWorldSAM, are a work in progress.
+- OpenWorldSAM [[Paper]](https://arxiv.org/abs/2507.05427)[[Project Page]](https://github.com/lbarberi1927/semantic_segmentation)
 
 ### Installation and Setup
 
@@ -26,6 +26,8 @@ bash bin/run_sam_server.sh
 bash bin/run_sam2_server.sh
 # For RayFronts
 bash bin/run_rayfronts_server.sh
+# For OpenWorldSAM
+bash bin/run_owsam_server.sh
 ```
 This will start a docker container with all the dependencies installed and the model loaded.
 The model servers will be running on port the following ports:
@@ -33,6 +35,7 @@ The model servers will be running on port the following ports:
 - Grounded-SAM: 7870
 - Grounded-SAM 2: 7880
 - RayFronts: 7890
+- OpenWorldSAM: 7900
 
 ### Common Issues
 There are a few possible issues you might encounter when running the code:
