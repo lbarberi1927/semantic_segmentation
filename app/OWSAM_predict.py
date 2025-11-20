@@ -37,7 +37,7 @@ from detectron2.utils.visualizer import Visualizer, random_color
 config_file = "/app/OpenWorldSAM/configs/ade20k/semantic-segmentation/Open-World-SAM2-CrossAttention.yaml"
 checkpoints_path = "/app/OpenWorldSAM/checkpoints/"
 RETURN_LOGITS = True
-MANUAL_MEMORY_PURGE = True
+MANUAL_MEMORY_PURGE = False
 
 
 def setup(config_file, checkpoints_path):

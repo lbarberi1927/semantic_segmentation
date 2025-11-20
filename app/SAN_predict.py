@@ -52,7 +52,7 @@ model_path = os.path.join(
     os.path.dirname(os.path.realpath(__file__)), "../SAN/resources/san_vit_large_14.pth"
 )
 
-MANUAL_MEMORY_PURGE = True  # set to False to disable manual memory purge
+MANUAL_MEMORY_PURGE = False  # set to False to disable manual memory purge
 
 
 def download_model(model_path: str):

@@ -16,7 +16,8 @@ git clone --recurse-submodules <repo_url>
 To run the code, please use docker for an easy setup. Depending on which model you want to use,
 please run the corresponding model server file to start the docker container.
 
-Example:
+### Running the Model Servers
+To start the model servers, please run one of the following commands in the terminal:
 ```bash
 # For SAN
 bash bin/run_san_server.sh
@@ -44,7 +45,14 @@ There are a few possible issues you might encounter when running the code:
 2. Grounded-SAM-2 `value.type() is deprecated` warning:
    I could not ignore this warning, and fixed it by changing lines 30 and 52 of semantic_segmentation/Grounded-SAM-2/grounding_dino/groundingdino/models/GroundingDINO/csrc/MsDeformAttn/ms_deform_attn.h from `value.type().is_cuda()` to `value.options().is_cuda()`.
 3. OpenWorldSAM `NotImplementedError: Cannot copy out of meta tensor; no data!`: This seems to be a common issue that I fixed by specifying the
-OpenWorldSAM requirements to install `transformers==4.50.3`. [Link to the discussion](https://github.com/huggingface/transformers/issues/31104)
+OpenWorldSAM requirements to install `transformers==4.50.3`. [Link to the discussion](https://github.com/huggingface/transformers/issues/31104). This and other problems were solved by also installing other package versions, specifically:
+`ray==2.51.1` and `bitsandbytes==0.42.0`.
 
+
+### Remarks for OpenWorldSAM
+OpenWorldSAM requires additional setup steps. The code has been released recently and [doesn't yet fully support zero-shot segmentation](https://github.com/GinnyXiao/OpenWorldSAM/issues/1).
+While this continues to be the case, I have implemented a workaround to make it work for zero-shot segmentation. You will need to modify the following files in the OpenWorldSAM submodule:
+
+In `semantic_segmentation/OpenWorldSAM/datasets/dataset_mappers/open_world_sam_semantic_dataset_mapper.py`, the `OpenWorldSAM2SemanticDatasetMapper` class's call method needs to be modified at line 193 until the return statement by adding an `if self.is_train:` statement.
 ### Usage
 You will need to download the model weights for the models you want to use. Please follow the instructions in the respective project pages linked above.
