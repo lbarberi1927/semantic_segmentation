@@ -43,7 +43,7 @@ There are a few possible issues you might encounter when running the code:
 1. Grounded-SAM-2 `RuntimeError: No available kernel. Aborting execution.`
    This is a common issue addressed in the [Grounded-SAM-2 repo](https://github.com/facebookresearch/sam2/issues/48)
 2. Grounded-SAM-2 `value.type() is deprecated` warning:
-   I could not ignore this warning, and fixed it by changing lines 30 and 52 of semantic_segmentation/Grounded-SAM-2/grounding_dino/groundingdino/models/GroundingDINO/csrc/MsDeformAttn/ms_deform_attn.h from `value.type().is_cuda()` to `value.options().is_cuda()`.
+   I could not ignore this warning, and fixed it by changing lines 30 and 52 of `semantic_segmentation/Grounded-SAM-2/grounding_dino/groundingdino/models/GroundingDINO/csrc/MsDeformAttn/ms_deform_attn.h` from `value.type().is_cuda()` to `value.options().is_cuda()`.
 3. OpenWorldSAM `NotImplementedError: Cannot copy out of meta tensor; no data!`: This seems to be a [common issue](https://github.com/huggingface/transformers/issues/31104) that I fixed by specifying the
 OpenWorldSAM requirements to install `transformers==4.50.3`. This and other problems were solved by also installing other package versions, specifically:
 `ray==2.51.1` and `bitsandbytes==0.42.0`.
