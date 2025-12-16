@@ -49,11 +49,10 @@ OpenWorldSAM requirements to install `transformers==4.50.3`. This and other prob
 `ray==2.51.1` and `bitsandbytes==0.42.0`.
 
 
-### Remarks for OpenWorldSAM
-OpenWorldSAM requires additional setup steps. The code has been released recently and [doesn't yet fully support zero-shot segmentation](https://github.com/GinnyXiao/OpenWorldSAM/issues/1).
-While this continues to be the case, I have implemented a workaround to make it work for zero-shot segmentation. You will need to modify the following files in the OpenWorldSAM submodule:
-
-In `semantic_segmentation/OpenWorldSAM/datasets/dataset_mappers/open_world_sam_semantic_dataset_mapper.py`, the `OpenWorldSAM2SemanticDatasetMapper` class's call method needs to be modified at line 193 until the return statement by adding an `if self.is_train:` statement.
-
 ### Usage
 You will need to download the model weights for the models you want to use. Please follow the instructions in the respective project pages linked above.
+
+### Sample Output
+Below are some sample outputs from the different models using the same input image and text prompts. The code used to produce
+these outputs cannot be shared publicly at the moment.
+![example_output.png](docs/images/example_output.png)
