@@ -22,7 +22,7 @@ WORKDIR /app/OpenWorldSAM/model/segment_anything_2
 RUN python setup.py build_ext --inplace
 
 RUN pip install --extra-index-url https://miropsota.github.io/torch_packages_builder detectron2==0.6+2a420edpt2.5.0cu121
-RUN pip install flask einops
+RUN pip install flask einops "transformers==4.50.3"
 
 COPY ./OpenWorldSAM /app/OpenWorldSAM/
 COPY ./app /app/app/
